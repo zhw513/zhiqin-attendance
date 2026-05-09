@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ZhiQin</string>
+    <string name="title_activity_main">ZhiQin</string>
+    <string name="package_name">com.zhiqin.attendance</string>
+    <string name="custom_url_scheme">com.zhiqin.attendance</string>
+</resources>

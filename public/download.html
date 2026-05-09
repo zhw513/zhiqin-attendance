@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智勤考勤 - APP下载</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 500px;
+            width: 100%;
+            background: white;
+            border-radius: 32px;
+            padding: 40px 30px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+            text-align: center;
+        }
+
+        .logo {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #4f46e5, #7c3aed);
+            border-radius: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 48px;
+            margin: 0 auto 24px;
+            box-shadow: 0 10px 30px rgba(79, 70, 229, 0.3);
+        }
+
+        h1 {
+            font-size: 28px;
+            color: #1e293b;
+            margin-bottom: 12px;
+            font-weight: 900;
+            letter-spacing: -0.5px;
+        }
+
+        .subtitle {
+            color: #64748b;
+            font-size: 14px;
+            margin-bottom: 32px;
+            line-height: 1.5;
+        }
+
+        .download-section {
+            margin-bottom: 32px;
+        }
+
+        .download-section h2 {
+            font-size: 16px;
+            color: #334155;
+            margin-bottom: 16px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 900;
+        }
+
+        .download-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .download-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            padding: 16px 24px;
+            border: 2px solid #e2e8f0;
+            border-radius: 16px;
+            background: white;
+            color: #1e293b;
+            font-weight: 900;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            font-family: inherit;
+        }
+
+        .download-btn:hover {
+            border-color: #4f46e5;
+            background: #f0f4ff;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(79, 70, 229, 0.15);
+        }
+
+        .download-btn.primary {
+            background: linear-gradient(135deg, #4f46e5, #7c3aed);
+            color: white;
+            border-color: transparent;
+        }
+
+        .download-btn.primary:hover {
+            background: linear-gradient(135deg, #4338ca, #6d28d9);
+            box-shadow: 0 12px 24px rgba(79, 70, 229, 0.3);
+        }
+
+        .icon {
+            font-size: 20px;
+        }
+
+        .divider {
+            height: 1px;
+            background: #e2e8f0;
+            margin: 28px 0;
+        }
+
+        .web-section {
+            padding: 20px;
+            background: #f1f5f9;
+            border-radius: 16px;
+            margin-bottom: 24px;
+        }
+
+        .web-section h3 {
+            color: #334155;
+            font-size: 14px;
+            margin-bottom: 12px;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .web-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #06b6d4, #0891b2);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-weight: 900;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        .web-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(6, 182, 212, 0.3);
+        }
+
+        .qr-section {
+            margin-top: 32px;
+            padding-top: 28px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .qr-section p {
+            font-size: 13px;
+            color: #64748b;
+            margin-bottom: 16px;
+            font-weight: 600;
+        }
+
+        .qr-container {
+            background: white;
+            padding: 12px;
+            border-radius: 12px;
+            display: inline-block;
+            border: 1px solid #e2e8f0;
+        }
+
+        .qr-container img {
+            width: 150px;
+            height: 150px;
+        }
+
+        .features {
+            text-align: left;
+            background: #f8fafc;
+            border-radius: 16px;
+            padding: 20px;
+            margin-top: 28px;
+        }
+
+        .features h3 {
+            font-size: 13px;
+            color: #334155;
+            margin-bottom: 12px;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .features ul {
+            list-style: none;
+            font-size: 13px;
+            color: #475569;
+        }
+
+        .features li {
+            padding: 6px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .features li:before {
+            content: "✓";
+            color: #22c55e;
+            font-weight: 900;
+            font-size: 14px;
+        }
+
+        .badge {
+            display: inline-block;
+            background: #dbeafe;
+            color: #0c4a6e;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-left: 8px;
+        }
+
+        .warning {
+            background: #fef3c7;
+            color: #92400e;
+            padding: 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-top: 20px;
+            line-height: 1.5;
+        }
+
+        .warning strong {
+            display: block;
+            margin-bottom: 4px;
+            font-weight: 900;
+        }
+
+        @media (max-width: 480px) {
+            .container {
+                padding: 28px 20px;
+            }
+
+            h1 {
+                font-size: 24px;
+            }
+
+            .download-btn {
+                padding: 14px 20px;
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">⏰</div>
+        <h1>智勤考勤</h1>
+        <p class="subtitle">轻量级企业考勤管理系统<br>支持 Web、iOS、Android</p>
+
+        <div class="web-section">
+            <h3>🌐 推荐：Web 版本（即点即用）</h3>
+            <p style="font-size: 12px; color: #64748b; margin-bottom: 12px; line-height: 1.4;">无需下载，支持所有设备，自动更新</p>
+            <a href="/" class="web-btn">
+                <span>打开 Web 版本</span>
+                <span>→</span>
+            </a>
+        </div>
+
+        <div class="download-section">
+            <h2>📱 原生应用</h2>
+            <div class="download-buttons">
+                <a href="javascript:downloadAPK()" class="download-btn primary">
+                    <span class="icon">🤖</span>
+                    <span>Android<span class="badge">APK</span></span>
+                </a>
+                <a href="javascript:downloadIPA()" class="download-btn">
+                    <span class="icon">🍎</span>
+                    <span>iOS<span class="badge">IPA</span></span>
+                </a>
+            </div>
+        </div>
+
+        <div class="features">
+            <h3>✨ 主要功能</h3>
+            <ul>
+                <li>上班签到 / 下班签退</li>
+                <li>地理位置验证</li>
+                <li>实时工作计时</li>
+                <li>工作汇报</li>
+                <li>考勤档案查看</li>
+                <li>加班审批（管理员）</li>
+                <li>员工管理（管理员）</li>
+                <li>Excel 报表导出</li>
+            </ul>
+        </div>
+
+        <div class="warning">
+            <strong>⚠️ 使用说明</strong>
+            Android 用户：下载后在"设置 → 安全 → 未知来源"中允许安装<br>
+            iOS 用户：通过 TestFlight 安装（内部版本分发）
+        </div>
+
+        <div class="qr-section">
+            <p>扫码直接打开 Web 版本</p>
+            <div class="qr-container">
+                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Crect fill='white' width='200' height='200'/%3E%3Ctext x='100' y='100' font-size='60' font-weight='bold' text-anchor='middle' dominant-baseline='middle' fill='%234f46e5'%3E?%3C/text%3E%3C/svg%3E" alt="QR Code">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function downloadAPK() {
+            const confirmed = confirm(
+                "正在下载 Android APP (APK)\n\n" +
+                "下载大小: ~50MB\n" +
+                "安装要求: Android 7.0+\n\n" +
+                "是否继续下载？"
+            );
+            if (confirmed) {
+                // 替换为实际的 APK 下载链接
+                window.location.href = '/app-release.apk';
+                // 或者如果托管在其他位置，改为实际链接
+                // window.location.href = 'https://your-cloud-storage.com/app.apk';
+            }
+        }
+
+        function downloadIPA() {
+            const message =
+                "iOS 应用通过 TestFlight 分发\n\n" +
+                "下载方式：\n" +
+                "1. 安装 TestFlight 应用\n" +
+                "2. 用提供的邀请链接\n" +
+                "3. 完成安装\n\n" +
+                "请联系管理员获取邀请链接";
+            alert(message);
+        }
+
+        // 页面加载时的初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            // 可以在这里添加动画或其他效果
+            console.log('智勤考勤应用下载页已加载');
+        });
+    </script>
+</body>
+</html>
