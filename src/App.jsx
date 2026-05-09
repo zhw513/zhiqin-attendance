@@ -288,9 +288,13 @@ const App = () => {
   };
 
   if (loading) return (
-    <div className="h-screen flex flex-col items-center justify-center bg-slate-50 gap-4">
+    <div className="h-screen flex flex-col items-center justify-center bg-slate-50 gap-6 p-6">
       <RefreshCw className="animate-spin text-indigo-600 w-10 h-10" />
       <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Secure Link Initializing...</p>
+      <p className="text-xs text-slate-300 max-w-xs text-center">首次加载可能需要 5-15 秒，手机端请使用 Chrome 或 Safari 打开</p>
+      <button onClick={() => window.location.reload()} className="mt-4 px-8 py-3 bg-indigo-600 text-white rounded-2xl font-black text-sm shadow-xl hover:bg-indigo-700 transition-all">
+        重新加载
+      </button>
     </div>
   );
 
@@ -340,7 +344,14 @@ const App = () => {
             <>
               <div className="pt-8 pb-3 px-4 text-[10px] font-black text-slate-300 uppercase tracking-widest">Admin Control</div>
               <NavItem active={activeTab === 'review'} onClick={() => { setActiveTab('review'); setSelectedUserUid(null); }} icon={<ShieldCheck />} label="加班审批" />
-              <NavItem active={activeTab === 'users'} onClick={() => setActiveTab('users')} icon={<Users />} label="全员名册" />
+              <div className="relative">
+                <NavItem active={activeTab === 'users'} onClick={() => setActiveTab('users')} icon={<Users />} label="全员名册" />
+                {allUsers.filter(u => !u.isActive).length > 0 && (
+                  <span className="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white text-[9px] font-black rounded-full flex items-center justify-center animate-pulse">
+                    {allUsers.filter(u => !u.isActive).length}
+                  </span>
+                )}
+              </div>
               <NavItem active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<Settings />} label="合规设定" />
             </>
           )}
@@ -379,11 +390,29 @@ const App = () => {
         <div className="flex-1 overflow-y-auto p-6 md:p-12 scrollbar-hide">
           <div className="max-w-5xl mx-auto space-y-8 pb-10">
             {profile?.role === 'admin' && activeTab === 'dashboard' && !selectedUserUid && (
-               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in slide-in-from-top-4">
+               <>
+               {allUsers.filter(u => !u.isActive).length > 0 && (
+                 <div className="bg-amber-50 border-2 border-amber-300 rounded-[3rem] p-6 flex items-center justify-between animate-in slide-in-from-top-4 shadow-lg">
+                   <div className="flex items-center gap-4">
+                     <div className="w-14 h-14 bg-amber-500 rounded-2xl flex items-center justify-center">
+                       <Users className="text-white w-7 h-7" />
+                     </div>
+                     <div>
+                       <p className="text-xl font-black text-amber-800">{allUsers.filter(u => !u.isActive).length} 位成员等待审批</p>
+                       <p className="text-xs font-bold text-amber-600">他们已提交加入申请，需要你来激活账号</p>
+                     </div>
+                   </div>
+                   <button onClick={() => setActiveTab('users')} className="px-8 py-4 bg-amber-600 text-white rounded-2xl font-black text-sm shadow-xl hover:bg-amber-700 transition-all whitespace-nowrap">
+                     立即审批 →
+                   </button>
+                 </div>
+               )}
+               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <StatCard label="当前在岗" value={onlineStaff.length} icon={<UserCheck className="text-emerald-500"/>} color="bg-emerald-50" />
                   <StatCard label="待批加班" value={records.filter(r => !r.isApproved).length} icon={<Activity className="text-orange-500"/>} color="bg-orange-50" />
                   <StatCard label="团队总数" value={allUsers.length} icon={<Users className="text-indigo-500"/>} color="bg-indigo-50" />
                </div>
+               </>
             )}
 
             {(selectedUserUid || activeTab === 'dashboard') && (
