@@ -318,7 +318,6 @@ const App = () => {
             <div className="py-8 space-y-4">
                <Activity className="animate-pulse text-amber-500 mx-auto w-10 h-10" />
                <p className="text-slate-400 font-bold">身份审计中，请联系管理员激活您的 ID</p>
-               <button onClick={() => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), { role: 'admin', isActive: true })} className="text-[10px] text-slate-100 mt-20">快速激活(测试用)</button>
             </div>
           )}
         </div>
