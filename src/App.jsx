@@ -672,7 +672,14 @@ const App = () => {
                 )}
               </div>
               <NavItem active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<Settings />} label="合规设定" />
-              <NavItem active={activeTab === 'archive'} onClick={() => { setActiveTab('archive'); setSelectedUserUid(null); }} icon={<XCircle />} label="回收站" />
+              <div className="relative">
+                <NavItem active={activeTab === 'archive'} onClick={() => { setActiveTab('archive'); setSelectedUserUid(null); }} icon={<XCircle />} label="回收站" />
+                {allUsers.filter(u => u.isDeleted).length > 0 && (
+                  <span className="absolute top-1 right-1 w-5 h-5 bg-rose-500 text-white text-[9px] font-black rounded-full flex items-center justify-center">
+                    {allUsers.filter(u => u.isDeleted).length}
+                  </span>
+                )}
+              </div>
             </>
           )}
         </nav>
@@ -863,7 +870,22 @@ const App = () => {
             )}
             
             {activeTab === 'users' && profile?.role === 'admin' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <>
+                {allUsers.filter(u => u.isDeleted).length > 0 && (
+                  <div className="mb-6 bg-rose-50 border-2 border-rose-200 rounded-[2rem] p-5 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <XCircle className="text-rose-500 w-6 h-6" />
+                      <div>
+                        <p className="text-sm font-black text-rose-700">{allUsers.filter(u => u.isDeleted).length} 位成员已删除</p>
+                        <p className="text-[10px] text-rose-500 font-bold">可在回收站中查看和恢复</p>
+                      </div>
+                    </div>
+                    <button onClick={() => setActiveTab('archive')} className="px-5 py-2.5 bg-rose-500 text-white rounded-xl text-xs font-black shadow hover:bg-rose-600 transition-all whitespace-nowrap">
+                      查看回收站 →
+                    </button>
+                  </div>
+                )}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {allUsers.filter(u => !u.isDeleted).map(u => {
                   const userRecords = records.filter(r => r.uid === u.uid);
                   const thisMonthRecords = userRecords.filter(r => r.date?.startsWith(new Date().toISOString().slice(0, 7)));
@@ -900,7 +922,8 @@ const App = () => {
                     </div>
                   );
                 })}
-              </div>
+                </div>
+              </>
             )}
 
             {activeTab === 'archive' && profile?.role === 'admin' && (
