@@ -119,9 +119,9 @@ const App = () => {
       const localTime = Date.now();
       const drift = Math.abs(worldTime - localTime) / 1000;
 
-      if (drift > 300) { // 偏差超过5分钟才报警
+      if (drift > 120) { // 偏差超过2分钟报警，防止篡改时间刷工时
         setIntegrityStatus('suspicious');
-        notify(`⚠️ 本地时间偏差过大 (${Math.round(drift)}s)，请检查系统时间`, "error");
+        notify(`⚠️ 本地时间偏差过大 (${Math.round(drift)}s)，请开启自动同步时间后刷新页面`, "error");
         return false;
       }
 
@@ -265,6 +265,27 @@ const App = () => {
       // 按工号过滤，确保跨设备记录都能看到
       const filtered = profile?.role === 'admin' ? data : data.filter(r => r.workId === profile.workId);
       setRecords(filtered);
+
+      // 自动关闭过期记录（昨日及之前未下卡的记录，防止杀后台导致工时异常）
+      const today = new Date().toISOString().split('T')[0];
+      const myStaleRecords = filtered.filter(r => !r.clockOut && r.date && r.date < today);
+      myStaleRecords.forEach(async (r) => {
+        const startMs = r.startMillis || 0;
+        const endMs = new Date(r.date + 'T23:59:59').getTime();
+        const cappedDuration = Math.min(
+          parseFloat(((endMs - startMs) / 3600000).toFixed(2)),
+          config.otThreshold || 9
+        );
+        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'attendance', r.id), {
+          clockOut: '23:59',
+          totalHours: Math.max(cappedDuration, 0),
+          isOvertime: false,
+          isApproved: false,
+          autoClosed: true,
+          autoCloseReason: '异常关闭：浏览器被关闭或后台被清除',
+          updatedAt: serverTimestamp()
+        }).catch(() => {});
+      });
     }, (err) => console.error("Records sync error", err));
 
     const configDoc = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global');
@@ -283,9 +304,10 @@ const App = () => {
     return () => { unsubRecords(); unsubConfig(); unsubUsers(); };
   }, [user, profile]);
 
-  // 3. 实时计时器
+  // 4. 实时计时器 + 心跳机制（防杀后台刷时长）
   useEffect(() => {
     let interval;
+    let heartbeatInterval;
     const activeRec = records.find(r => r.uid === user?.uid && !r.clockOut);
     if (activeRec) {
       interval = setInterval(() => {
@@ -296,8 +318,14 @@ const App = () => {
         const s = Math.floor((diff % 60000) / 1000);
         setElapsedTime(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`);
       }, 1000);
+      // 每60秒心跳一次，证明app仍在运行
+      heartbeatInterval = setInterval(() => {
+        updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'attendance', activeRec.id), {
+          lastHeartbeat: serverTimestamp()
+        }).catch(() => {});
+      }, 60000);
     } else setElapsedTime("00:00:00");
-    return () => clearInterval(interval);
+    return () => { clearInterval(interval); clearInterval(heartbeatInterval); };
   }, [records, user]);
 
   const checkLocation = () => {
@@ -485,6 +513,7 @@ const App = () => {
               <input type="text" value={nameInput} onChange={e => setNameInput(e.target.value)} className="w-full p-5 bg-slate-50 rounded-2xl text-center font-bold outline-none focus:ring-2 ring-indigo-300" placeholder="真实姓名（中文）" />
               <button onClick={async () => {
                 if (!inviteInput || !nameInput) return notify("请填写所有信息", "error");
+                if (!user || !user.uid) return notify("认证服务初始化中，请稍候几秒再试", "warning");
                 if (inviteInput !== config.inviteCode) return notify("邀请码错误", "error");
 
                 // 验证姓名是否为中文
@@ -541,6 +570,8 @@ const App = () => {
               <input type="text" value={nameInput} onChange={e => setNameInput(e.target.value)} className="w-full p-5 bg-slate-50 rounded-2xl text-center font-bold outline-none focus:ring-2 ring-indigo-300" placeholder="真实姓名" />
               <button onClick={async () => {
                 if (!workIdInput || !nameInput) return notify("请填写所有信息", "error");
+                // 等待匿名认证完成
+                if (!user || !user.uid) return notify("认证服务初始化中，请稍候几秒再试", "warning");
 
                 try {
                   let userData = null;
