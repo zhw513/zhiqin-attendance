@@ -8,7 +8,7 @@ import {
 import { initializeApp } from 'firebase/app';
 import {
   getFirestore, collection, doc, setDoc, onSnapshot, updateDoc,
-  addDoc, serverTimestamp, writeBatch, getDoc
+  addDoc, serverTimestamp, writeBatch, getDoc, getDocs
 } from 'firebase/firestore';
 import { 
   getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken 
@@ -383,26 +383,45 @@ const App = () => {
             <h2 className="text-3xl font-black text-slate-800">新用户注册</h2>
             <div className="space-y-4">
               <input type="text" value={inviteInput} onChange={e => setInviteInput(e.target.value)} className="w-full p-5 bg-slate-50 rounded-2xl text-center font-black text-lg outline-none focus:ring-2 ring-indigo-300" placeholder="邀请码" />
-              <input type="text" value={nameInput} onChange={e => setNameInput(e.target.value)} className="w-full p-5 bg-slate-50 rounded-2xl text-center font-bold outline-none focus:ring-2 ring-indigo-300" placeholder="真实姓名" />
+              <input type="text" value={nameInput} onChange={e => setNameInput(e.target.value)} className="w-full p-5 bg-slate-50 rounded-2xl text-center font-bold outline-none focus:ring-2 ring-indigo-300" placeholder="真实姓名（中文）" />
               <button onClick={async () => {
                 if (!inviteInput || !nameInput) return notify("请填写所有信息", "error");
                 if (inviteInput !== config.inviteCode) return notify("邀请码错误", "error");
 
-                // 用 user.uid 作为临时 ID，注册新用户
+                // 验证姓名是否为中文
+                const chineseNameRegex = /^[一-龥]+$/;
+                if (!chineseNameRegex.test(nameInput)) {
+                  return notify("姓名必须为中文字符", "error");
+                }
+
                 try {
-                  await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), {
+                  // 自动生成 workId：获取最后一个用户的编号，然后+1
+                  const usersSnapshot = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'users'));
+                  const maxNum = usersSnapshot.docs.reduce((max, doc) => {
+                    const workId = doc.data().workId;
+                    if (workId && workId.startsWith('KQ-')) {
+                      const num = parseInt(workId.substring(3));
+                      return isNaN(num) ? max : Math.max(max, num);
+                    }
+                    return max;
+                  }, 0);
+                  const newWorkId = `KQ-${String(maxNum + 1).padStart(4, '0')}`;
+
+                  // 用自动生成的 workId 作为 document ID
+                  await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', newWorkId), {
                     uid: user.uid,
                     name: nameInput,
-                    workId: null,
+                    workId: newWorkId,
                     role: 'staff',
-                    isActive: false,
+                    isActive: true, // 自动激活
                     isRemoteEnabled: false,
                     createdAt: serverTimestamp(),
                     registrationMethod: 'invite_code'
                   });
-                  notify("✓ 申请已提交，等待管理员分配工号和激活", "success");
+                  notify(`✓ 注册成功！您的工号是：${newWorkId}`, "success");
                   setTimeout(() => window.location.reload(), 2000);
                 } catch (err) {
+                  console.error("Registration error:", err);
                   notify("注册失败：" + err.message, "error");
                 }
               }} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-lg shadow-xl hover:bg-indigo-700">
