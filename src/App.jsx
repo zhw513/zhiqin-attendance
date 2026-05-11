@@ -173,10 +173,25 @@ const App = () => {
         onSnapshot(userDocRef, (snap) => {
           if (snap.exists()) {
             setProfile(snap.data());
+            setLoading(false);
           } else {
-            setProfile({ uid: u.uid, role: 'staff', isActive: false, name: '', workId: '' });
+            // 如果按 uid 没找到，说明可能是新用户，按 uid 字段查找
+            const usersCol = collection(db, 'artifacts', appId, 'public', 'data', 'users');
+            const unsubSearch = onSnapshot(usersCol, (snapshot) => {
+              const foundDoc = snapshot.docs.find(doc => doc.data().uid === u.uid);
+              if (foundDoc) {
+                setProfile(foundDoc.data());
+              } else {
+                setProfile({ uid: u.uid, role: 'staff', isActive: false, name: '', workId: '' });
+              }
+              setLoading(false);
+            }, (err) => {
+              console.error("Profile search error", err);
+              setProfile({ uid: u.uid, role: 'staff', isActive: false, name: '', workId: '' });
+              setLoading(false);
+            });
+            return unsubSearch;
           }
-          setLoading(false);
         }, (err) => {
           console.error("Profile sync error", err);
           setLoading(false);
@@ -442,15 +457,35 @@ const App = () => {
                 if (!workIdInput || !nameInput) return notify("请填写所有信息", "error");
 
                 try {
-                  // 查找该工号的账户
+                  let userData = null;
+                  let userDocId = null;
+
+                  // 方案1：先按 workId 查找（新用户）
                   const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', workIdInput);
                   const userSnap = await getDoc(userRef);
 
-                  if (!userSnap.exists()) {
+                  if (userSnap.exists()) {
+                    userData = userSnap.data();
+                    userDocId = workIdInput;
+                  } else {
+                    // 方案2：如果没找到，按 name 和 workId 在所有用户中查找（兼容旧用户）
+                    const usersSnapshot = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'users'));
+                    const foundUser = usersSnapshot.docs.find(doc => {
+                      const data = doc.data();
+                      return (data.name === nameInput && data.workId === workIdInput) ||
+                             (data.name === nameInput && !data.workId) // 兼容没有 workId 的旧用户
+                    });
+
+                    if (foundUser) {
+                      userData = foundUser.data();
+                      userDocId = foundUser.id;
+                    }
+                  }
+
+                  if (!userData) {
                     return notify("账户不存在，请先注册或检查工号", "error");
                   }
 
-                  const userData = userSnap.data();
                   if (userData.name !== nameInput) {
                     return notify("姓名或工号错误", "error");
                   }
@@ -460,7 +495,7 @@ const App = () => {
                   }
 
                   // 登录成功，更新最后登录时间
-                  await updateDoc(userRef, {
+                  await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', userDocId), {
                     lastLoginAt: serverTimestamp(),
                     lastLoginDevice: getPlatformInfo().type
                   });
