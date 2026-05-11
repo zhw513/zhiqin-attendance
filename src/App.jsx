@@ -497,12 +497,8 @@ const App = () => {
                     return notify("账户不存在，请先注册或检查工号", "error");
                   }
 
-                  // 对于登录验证，只要工号正确就可以（防止旧账户因为名称格式不一致而登不上）
-                  // 严格验证名称是否至少包含输入的文本
-                  if (userData.name && userData.name !== nameInput && !userData.name.includes(nameInput) && !nameInput.includes(userData.name)) {
-                    return notify("姓名或工号不匹配，请检查输入", "error");
-                  }
-
+                  // 如果按工号找到了账户，就直接允许登录（工号是唯一标识，不再检查名称）
+                  // 这样可以兼容名称输入错误的情况（如"牛天磊"vs"牛天运"）
                   if (!userData.isActive) {
                     return notify("账户未激活，请等待管理员审批", "warning");
                   }
