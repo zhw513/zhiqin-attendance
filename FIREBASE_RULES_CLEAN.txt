@@ -1,0 +1,67 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /artifacts/{appId}/public/data/users/{userId} {
+      allow read: if request.auth.uid == userId;
+      allow update: if request.auth.uid == userId &&
+                       request.resource.data.keys().hasOnly(['name', 'workId', 'isRemoteEnabled', 'lastLoginAt', 'lastLoginDevice', 'sessionId']) &&
+                       resource.data.role == request.resource.data.role &&
+                       resource.data.isActive == request.resource.data.isActive;
+      allow read: if isAdmin(appId);
+      allow update: if isAdmin(appId) &&
+                       request.resource.data.keys().hasOnly(['uid', 'name', 'workId', 'role', 'isActive', 'isRemoteEnabled', 'isDeleted', 'deletedAt', 'deletedBy', 'deletedByWorkId', 'createdAt', 'registrationMethod', 'lastLoginAt', 'lastLoginDevice', 'sessionId']);
+      allow delete: if isAdmin(appId);
+      allow create: if request.auth != null &&
+                       request.auth.uid == userId &&
+                       request.resource.data.uid == request.auth.uid &&
+                       request.resource.data.role == 'staff' &&
+                       request.resource.data.isActive == true;
+    }
+
+    match /artifacts/{appId}/public/data/attendance/{attendanceId} {
+      allow read: if request.auth.uid == resource.data.uid;
+      allow create: if request.auth != null &&
+                       request.auth.uid == request.resource.data.uid &&
+                       request.resource.data.isApproved == true &&
+                       !request.resource.data.keys().hasAny(['approvedBy', 'approvedAt', 'rejectionReason']);
+      allow update: if request.auth.uid == resource.data.uid &&
+                       request.resource.data.keys().hasOnly(['uid', 'userName', 'workId', 'date', 'clockIn', 'clockOut', 'startMillis', 'totalHours', 'platform', 'workMode', 'isApproved', 'isOvertime', 'workSummary', 'createdAt', 'updatedAt', 'auditStatus', 'lastHeartbeat', 'autoClosed', 'autoCloseReason']) &&
+                       resource.data.uid == request.resource.data.uid &&
+                       resource.data.clockIn == request.resource.data.clockIn &&
+                       resource.data.date == request.resource.data.date &&
+                       resource.data.startMillis == request.resource.data.startMillis &&
+                       resource.data.isApproved == request.resource.data.isApproved &&
+                       resource.data.isOvertime == request.resource.data.isOvertime &&
+                       request.resource.data.workSummary.size() <= 500;
+      allow delete: if false;
+      allow read: if isAdmin(appId);
+      allow update: if isAdmin(appId) &&
+                       request.resource.data.keys().hasOnly(['uid', 'userName', 'workId', 'date', 'clockIn', 'clockOut', 'startMillis', 'totalHours', 'platform', 'workMode', 'isApproved', 'isOvertime', 'workSummary', 'createdAt', 'updatedAt', 'auditStatus', 'lastHeartbeat', 'autoClosed', 'autoCloseReason', 'approvedBy', 'approvedAt', 'rejectionReason']);
+      allow delete: if isAdmin(appId);
+    }
+
+    match /artifacts/{appId}/public/data/settings/{document=**} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin(appId);
+    }
+
+    match /artifacts/{appId}/public/data/audit_logs/{logId} {
+      allow create: if request.auth != null &&
+                       request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth.uid == resource.data.userId;
+      allow read: if isAdmin(appId);
+      allow update, delete: if false;
+    }
+
+    function isAdmin(appId) {
+      let userDoc = get(/databases/$(database)/documents/artifacts/$(appId)/public/data/users/$(request.auth.uid));
+      return request.auth != null && userDoc.exists && userDoc.data.role == 'admin' && userDoc.data.isActive == true;
+    }
+
+    function isActiveStaff(appId) {
+      let userDoc = get(/databases/$(database)/documents/artifacts/$(appId)/public/data/users/$(request.auth.uid));
+      return request.auth != null && userDoc.exists && userDoc.data.role == 'staff' && userDoc.data.isActive == true;
+    }
+  }
+}
