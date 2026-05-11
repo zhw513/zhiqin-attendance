@@ -6,9 +6,9 @@ import {
   FileSpreadsheet, Activity, UserCheck, CheckCircle2, ShieldAlert, Monitor
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { 
-  getFirestore, collection, doc, setDoc, onSnapshot, updateDoc, 
-  addDoc, serverTimestamp
+import {
+  getFirestore, collection, doc, setDoc, onSnapshot, updateDoc,
+  addDoc, serverTimestamp, writeBatch
 } from 'firebase/firestore';
 import { 
   getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken 
@@ -74,19 +74,44 @@ const App = () => {
   const checkIntegrity = async () => {
     setIntegrityStatus('checking');
     try {
-      const res = await fetch('https://worldtimeapi.org/api/ip', { cache: 'no-store' });
-      if (!res.ok) throw new Error("Time API Link Error");
-      const data = await res.json();
-      const worldTime = new Date(data.datetime).getTime();
-      const localTime = new Date().getTime();
-      
+      let worldTime = null;
+
+      // 尝试多个时间服务，优先使用国内可访问的
+      const timeApis = [
+        { url: 'https://api.github.com', parseTime: (d) => new Date(d.headers?.date || new Date()).getTime() },
+        { url: 'https://worldtimeapi.org/api/ip', parseTime: (d) => new Date(d.datetime).getTime() }
+      ];
+
+      for (const api of timeApis) {
+        try {
+          const res = await Promise.race([
+            fetch(api.url, { cache: 'no-store', timeout: 3000 }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
+          ]);
+          if (res.ok) {
+            const data = await res.json();
+            worldTime = api.parseTime(data);
+            break;
+          }
+        } catch (e) {
+          continue; // 尝试下一个 API
+        }
+      }
+
+      // 如果无法获取网络时间，使用本地时间
+      if (!worldTime) {
+        worldTime = Date.now();
+      }
+
+      const localTime = Date.now();
       const drift = Math.abs(worldTime - localTime) / 1000;
-      if (drift > 300) { // 偏差超过5分钟
+
+      if (drift > 300) { // 偏差超过5分钟才报警
         setIntegrityStatus('suspicious');
-        notify(`环境异常：本地时间与标准时间不符 (${Math.round(drift)}s)，请开启自动同步`, "error");
+        notify(`⚠️ 本地时间偏差过大 (${Math.round(drift)}s)，请检查系统时间`, "error");
         return false;
       }
-      
+
       const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
       setPlatformInfo({
         type: isMobile ? 'Mobile' : 'Desktop/PC',
@@ -97,7 +122,8 @@ const App = () => {
       setIntegrityStatus('verified');
       return true;
     } catch (err) {
-      setIntegrityStatus('verified'); 
+      console.warn("Integrity check failed, continuing anyway:", err);
+      setIntegrityStatus('verified');
       return true;
     }
   };
@@ -238,9 +264,10 @@ const App = () => {
   };
 
   const handleClockIn = async () => {
+    if (!user || !profile) return notify("用户信息加载中，请稍候", "info");
     const isIntegrityOk = await checkIntegrity();
     if (!isIntegrityOk || integrityStatus === 'suspicious') return;
-    if (locationStatus !== 'success' && !profile?.isRemoteEnabled) return notify("范围校验失败：请在规定区域打卡", "error");
+    if (locationStatus !== 'success' && !profile?.isRemoteEnabled) return notify("范围校验失败：请在规定区域打卡或申请异地打卡权限", "error");
     setIsSaving(true);
     try {
       const now = new Date();
@@ -248,15 +275,18 @@ const App = () => {
         uid: user.uid, userName: profile?.name || '未知', workId: profile?.workId || 'N/A',
         date: now.toISOString().split('T')[0],
         clockIn: now.toTimeString().slice(0, 5),
-        startMillis: Date.now(), 
+        startMillis: Date.now(),
         clockOut: null,
-        isApproved: true, 
+        isApproved: true,
         platform: platformInfo.type,
         workMode: locationStatus === 'success' ? 'office' : 'remote',
         auditStatus: integrityStatus,
         createdAt: serverTimestamp(),
       });
-      notify("签到成功，已开启安全审计", "success");
+      notify("✓ 签到成功", "success");
+    } catch (err) {
+      console.error("Clock in error:", err);
+      notify("签到失败：" + (err.message || "请检查网络连接"), "error");
     } finally { setIsSaving(false); }
   };
 
@@ -265,11 +295,16 @@ const App = () => {
     if (!isIntegrityOk) return;
     setIsSaving(true);
     const target = records.find(r => r.id === recordId);
+    if (!target) {
+      notify("考勤记录不存在", "error");
+      setIsSaving(false);
+      return;
+    }
     const now = new Date();
     const duration = parseFloat(((Date.now() - target.startMillis) / 3600000).toFixed(2));
     const isOT = duration > config.otThreshold;
     if (isOT && !workSummary.trim()) {
-      notify("加班检测：必须填写今日产出汇报", "info");
+      notify("✓ 加班检测：请填写今日产出汇报后再提交", "info");
       setIsSaving(false);
       return;
     }
@@ -279,11 +314,14 @@ const App = () => {
         totalHours: duration,
         isOvertime: isOT,
         isApproved: !isOT,
-        workSummary: workSummary,
+        workSummary: workSummary.trim(),
         updatedAt: serverTimestamp()
       });
       setWorkSummary('');
-      notify("下班签退成功", "success");
+      notify("✓ 下班签退成功", "success");
+    } catch (err) {
+      console.error("Clock out error:", err);
+      notify("签退失败：" + (err.message || "请检查网络连接"), "error");
     } finally { setIsSaving(false); }
   };
 
@@ -291,10 +329,16 @@ const App = () => {
     <div className="h-screen flex flex-col items-center justify-center bg-slate-50 gap-6 p-6">
       <RefreshCw className="animate-spin text-indigo-600 w-10 h-10" />
       <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Secure Link Initializing...</p>
-      <p className="text-xs text-slate-300 max-w-xs text-center">首次加载可能需要 5-15 秒，手机端请使用 Chrome 或 Safari 打开</p>
+      <p className="text-xs text-slate-300 max-w-xs text-center">
+        首次加载可能需要 5-15 秒
+        <br/>
+        {!isOnline && <span className="text-rose-500 font-bold">⚠️ 网络未连接</span>}
+        {isOnline && <span className="text-emerald-500 font-bold">✓ 网络已连接</span>}
+      </p>
       <button onClick={() => window.location.reload()} className="mt-4 px-8 py-3 bg-indigo-600 text-white rounded-2xl font-black text-sm shadow-xl hover:bg-indigo-700 transition-all">
-        重新加载
+        {isOnline ? '重新加载' : '检查网络后重试'}
       </button>
+      <p className="text-[9px] text-slate-400 max-w-xs text-center">推荐使用 Chrome（安卓）或 Safari（iPhone）</p>
     </div>
   );
 
@@ -520,11 +564,17 @@ const App = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {allUsers.map(u => (
                   <div key={u.uid} onClick={() => setSelectedUserUid(u.uid)} className="bg-white p-7 rounded-[3rem] border border-slate-100 shadow-sm flex flex-col justify-between group hover:shadow-2xl transition-all cursor-pointer relative overflow-hidden text-left">
-                    <div className="flex items-center gap-5 mb-8">
-                      <div className={`w-16 h-16 rounded-[2rem] bg-indigo-50 flex items-center justify-center font-black text-2xl text-indigo-600`}>{u.name?.[0] || 'U'}</div>
-                      <div className="truncate"><h5 className="font-black text-xl text-slate-800">{u.name}</h5><p className="text-[10px] text-slate-400 font-bold">ID: {u.workId}</p></div>
+                    <div className="flex items-center gap-5 mb-6">
+                      <div className={`w-16 h-16 rounded-[2rem] ${u.isActive ? 'bg-indigo-50' : 'bg-slate-100'} flex items-center justify-center font-black text-2xl ${u.isActive ? 'text-indigo-600' : 'text-slate-400'}`}>{u.name?.[0] || 'U'}</div>
+                      <div className="truncate flex-1"><h5 className="font-black text-xl text-slate-800">{u.name}</h5><p className="text-[10px] text-slate-400 font-bold">ID: {u.workId}</p></div>
                     </div>
-                    <button onClick={(e) => { e.stopPropagation(); updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid), { isActive: !u.isActive }); }} className={`w-full py-3 ${u.isActive ? 'bg-slate-900' : 'bg-emerald-600'} text-white rounded-xl text-[10px] font-black uppercase shadow-lg transition-all`}>{u.isActive ? '锁定' : '激活'}</button>
+                    <div className="space-y-2 mb-4">
+                      <button onClick={(e) => { e.stopPropagation(); updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid), { isRemoteEnabled: !u.isRemoteEnabled }).catch(err => notify('更新异地打卡失败', 'error')); }} className={`w-full py-2.5 ${u.isRemoteEnabled ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'} rounded-lg text-[9px] font-black uppercase shadow transition-all hover:shadow-md`}>{u.isRemoteEnabled ? '✓ 支持异地打卡' : '✗ 禁止异地打卡'}</button>
+                    </div>
+                    <div className="flex gap-3">
+                      <button onClick={(e) => { e.stopPropagation(); updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid), { isActive: !u.isActive }).catch(err => notify('更新状态失败', 'error')); }} className={`flex-1 py-3 ${u.isActive ? 'bg-slate-900 hover:bg-slate-800' : 'bg-emerald-600 hover:bg-emerald-700'} text-white rounded-xl text-[10px] font-black uppercase shadow-lg transition-all`}>{u.isActive ? '锁定' : '激活'}</button>
+                      <button onClick={(e) => { e.stopPropagation(); if(window.confirm(`确认删除 ${u.name} ？`)) { updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid), { isActive: false, isDeleted: true, deletedAt: new Date().toISOString() }).then(() => notify('成员已删除', 'success')).catch(err => notify('删除失败', 'error')); } }} className="flex-1 py-3 bg-rose-100 text-rose-600 hover:bg-rose-200 rounded-xl text-[10px] font-black uppercase shadow transition-all">删除</button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -557,10 +607,12 @@ const App = () => {
                   <button onClick={async () => {
                     setIsSaving(true);
                     try {
-                      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global'), config);
-                      notify("设置已保存", "success");
+                      const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global');
+                      await setDoc(settingsRef, config, { merge: true });
+                      notify("打卡地址已保存", "success");
                     } catch (err) {
-                      notify("保存失败，请重试", "error");
+                      console.error("Settings save error:", err);
+                      notify("保存失败：" + err.message, "error");
                     } finally {
                       setIsSaving(false);
                     }
@@ -587,10 +639,12 @@ const App = () => {
                   <button onClick={async () => {
                     setIsSaving(true);
                     try {
-                      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global'), config);
-                      notify("所有设置已保存", "success");
+                      const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'global');
+                      await setDoc(settingsRef, config, { merge: true });
+                      notify("全部设置已保存", "success");
                     } catch (err) {
-                      notify("保存失败，请重试", "error");
+                      console.error("Settings save error:", err);
+                      notify("保存失败：" + err.message, "error");
                     } finally {
                       setIsSaving(false);
                     }
@@ -603,6 +657,11 @@ const App = () => {
           </div>
         </div>
 
+        {!isOnline && (
+          <div className="fixed top-0 left-0 right-0 bg-rose-500 text-white text-xs font-black py-2 text-center z-50 flex items-center justify-center gap-2">
+            <Wifi className="w-3 h-3" /> 网络已断开，部分功能不可用
+          </div>
+        )}
         <div className="fixed bottom-0 left-0 right-0 h-20 bg-white/90 backdrop-blur-xl border-t flex md:hidden items-center justify-around px-6 z-40">
           <MobileNavItem active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<Smartphone />} />
           <MobileNavItem active={activeTab === 'history'} onClick={() => setActiveTab('history')} icon={<Calendar />} />
