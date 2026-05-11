@@ -8,7 +8,7 @@ import {
 import { initializeApp } from 'firebase/app';
 import {
   getFirestore, collection, doc, setDoc, onSnapshot, updateDoc,
-  addDoc, serverTimestamp, writeBatch
+  addDoc, serverTimestamp, writeBatch, getDoc
 } from 'firebase/firestore';
 import { 
   getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken 
@@ -34,19 +34,19 @@ const appId = "intelligent-attendance-system-v1";
 const App = () => {
   // --- 状态管理 ---
   const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null); 
+  const [profile, setProfile] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [records, setRecords] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
-  const [locationStatus, setLocationStatus] = useState('pending'); 
+  const [locationStatus, setLocationStatus] = useState('pending');
   const [distance, setDistance] = useState(null);
   const [elapsedTime, setElapsedTime] = useState("00:00:00");
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [notification, setNotification] = useState(null);
-  
+
   // 安全审计状态
-  const [integrityStatus, setIntegrityStatus] = useState('checking'); 
+  const [integrityStatus, setIntegrityStatus] = useState('checking');
   const [platformInfo, setPlatformInfo] = useState({ type: 'unknown', secure: true });
 
   // UI 状态
@@ -54,7 +54,11 @@ const App = () => {
   const [workSummary, setWorkSummary] = useState('');
   const [inviteInput, setInviteInput] = useState('');
   const [nameInput, setNameInput] = useState('');
+  const [workIdInput, setWorkIdInput] = useState('');
   const [loading, setLoading] = useState(true);
+
+  // 认证模式：'choose' | 'register' | 'login' | 'app'
+  const [authMode, setAuthMode] = useState('choose');
 
   // 考勤配置
   const [config, setConfig] = useState({
@@ -68,6 +72,15 @@ const App = () => {
   const notify = (msg, type = 'info') => {
     setNotification({ msg, type });
     setTimeout(() => setNotification(null), 3000);
+  };
+
+  const getPlatformInfo = () => {
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    return {
+      type: isMobile ? 'Mobile' : 'Desktop/PC',
+      secure: isMobile,
+      userAgent: navigator.userAgent
+    };
   };
 
   // --- 核心安全校验：防止篡改本地时间 ---
@@ -342,33 +355,110 @@ const App = () => {
     </div>
   );
 
-  // 注册/未激活引导
-  if (!profile || !profile.isActive) {
+  // 认证流程：选择注册或登录
+  if (!user || !profile || !profile.isActive) {
     return (
-      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-6">
+      <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-slate-100 flex items-center justify-center p-6">
         {notification && <Toast msg={notification.msg} type={notification.type} />}
-        <div className="bg-white p-12 rounded-[3.5rem] shadow-2xl max-w-md w-full text-center space-y-8 border border-slate-100">
-          <div className="w-24 h-24 bg-indigo-600 rounded-[2.5rem] flex items-center justify-center mx-auto shadow-xl shadow-indigo-100"><ShieldCheck className="text-white w-12 h-12" /></div>
-          <h2 className="text-3xl font-black text-slate-800">智勤身份激活</h2>
-          {!profile?.name ? (
+
+        {authMode === 'choose' && (
+          <div className="bg-white p-12 rounded-[3.5rem] shadow-2xl max-w-md w-full text-center space-y-8 border border-slate-100">
+            <div className="w-24 h-24 bg-indigo-600 rounded-[2.5rem] flex items-center justify-center mx-auto shadow-xl shadow-indigo-100"><ShieldCheck className="text-white w-12 h-12" /></div>
+            <h2 className="text-3xl font-black text-slate-800">智勤考勤系统</h2>
+            <p className="text-slate-500 font-bold">请选择您的操作</p>
+            <div className="space-y-3">
+              <button onClick={() => setAuthMode('register')} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-lg shadow-xl hover:bg-indigo-700">
+                📝 新用户注册
+              </button>
+              <button onClick={() => setAuthMode('login')} className="w-full py-5 bg-slate-200 text-slate-800 rounded-2xl font-black text-lg shadow-lg hover:bg-slate-300">
+                🔑 已有账号登录
+              </button>
+            </div>
+          </div>
+        )}
+
+        {authMode === 'register' && (
+          <div className="bg-white p-12 rounded-[3.5rem] shadow-2xl max-w-md w-full text-center space-y-8 border border-slate-100">
+            <button onClick={() => { setAuthMode('choose'); setInviteInput(''); setNameInput(''); setWorkIdInput(''); }} className="text-left text-indigo-600 font-bold text-sm">← 返回</button>
+            <h2 className="text-3xl font-black text-slate-800">新用户注册</h2>
             <div className="space-y-4">
-              <input type="text" value={inviteInput} onChange={e => setInviteInput(e.target.value)} className="w-full p-5 bg-slate-50 rounded-2xl text-center font-black text-xl outline-none" placeholder="团队邀请码" />
-              <input type="text" value={nameInput} onChange={e => setNameInput(e.target.value)} className="w-full p-5 bg-slate-50 rounded-2xl text-center font-bold" placeholder="您的真实姓名" />
+              <input type="text" value={inviteInput} onChange={e => setInviteInput(e.target.value)} className="w-full p-5 bg-slate-50 rounded-2xl text-center font-black text-lg outline-none focus:ring-2 ring-indigo-300" placeholder="邀请码" />
+              <input type="text" value={nameInput} onChange={e => setNameInput(e.target.value)} className="w-full p-5 bg-slate-50 rounded-2xl text-center font-bold outline-none focus:ring-2 ring-indigo-300" placeholder="真实姓名" />
               <button onClick={async () => {
+                if (!inviteInput || !nameInput) return notify("请填写所有信息", "error");
                 if (inviteInput !== config.inviteCode) return notify("邀请码错误", "error");
-                await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), {
-                  uid: user.uid, name: nameInput, workId: `KQ-${user.uid.slice(0,4).toUpperCase()}`, role: 'staff', isActive: false, isRemoteEnabled: false
-                });
-                notify("申请已提交，等待审核", "success");
-              }} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-lg shadow-xl shadow-indigo-100">提交加入申请</button>
+
+                // 用 user.uid 作为临时 ID，注册新用户
+                try {
+                  await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), {
+                    uid: user.uid,
+                    name: nameInput,
+                    workId: null,
+                    role: 'staff',
+                    isActive: false,
+                    isRemoteEnabled: false,
+                    createdAt: serverTimestamp(),
+                    registrationMethod: 'invite_code'
+                  });
+                  notify("✓ 申请已提交，等待管理员分配工号和激活", "success");
+                  setTimeout(() => window.location.reload(), 2000);
+                } catch (err) {
+                  notify("注册失败：" + err.message, "error");
+                }
+              }} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-lg shadow-xl hover:bg-indigo-700">
+                提交注册申请
+              </button>
             </div>
-          ) : (
-            <div className="py-8 space-y-4">
-               <Activity className="animate-pulse text-amber-500 mx-auto w-10 h-10" />
-               <p className="text-slate-400 font-bold">身份审计中，请联系管理员激活您的 ID</p>
+          </div>
+        )}
+
+        {authMode === 'login' && (
+          <div className="bg-white p-12 rounded-[3.5rem] shadow-2xl max-w-md w-full text-center space-y-8 border border-slate-100">
+            <button onClick={() => { setAuthMode('choose'); setWorkIdInput(''); setNameInput(''); }} className="text-left text-indigo-600 font-bold text-sm">← 返回</button>
+            <h2 className="text-3xl font-black text-slate-800">账号登录</h2>
+            <div className="space-y-4">
+              <input type="text" value={workIdInput} onChange={e => setWorkIdInput(e.target.value)} className="w-full p-5 bg-slate-50 rounded-2xl text-center font-black text-lg outline-none focus:ring-2 ring-indigo-300" placeholder="工号 (如: KQ-001)" />
+              <input type="text" value={nameInput} onChange={e => setNameInput(e.target.value)} className="w-full p-5 bg-slate-50 rounded-2xl text-center font-bold outline-none focus:ring-2 ring-indigo-300" placeholder="真实姓名" />
+              <button onClick={async () => {
+                if (!workIdInput || !nameInput) return notify("请填写所有信息", "error");
+
+                try {
+                  // 查找该工号的账户
+                  const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', workIdInput);
+                  const userSnap = await getDoc(userRef);
+
+                  if (!userSnap.exists()) {
+                    return notify("账户不存在，请先注册或检查工号", "error");
+                  }
+
+                  const userData = userSnap.data();
+                  if (userData.name !== nameInput) {
+                    return notify("姓名或工号错误", "error");
+                  }
+
+                  if (!userData.isActive) {
+                    return notify("账户未激活，请等待管理员审批", "warning");
+                  }
+
+                  // 登录成功，更新最后登录时间
+                  await updateDoc(userRef, {
+                    lastLoginAt: serverTimestamp(),
+                    lastLoginDevice: getPlatformInfo().type
+                  });
+
+                  notify("✓ 登录成功", "success");
+                  setProfile(userData);
+                  setAuthMode('app');
+                } catch (err) {
+                  console.error("Login error:", err);
+                  notify("登录失败：" + err.message, "error");
+                }
+              }} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-lg shadow-xl hover:bg-indigo-700">
+                登录
+              </button>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -562,21 +652,42 @@ const App = () => {
             
             {activeTab === 'users' && profile?.role === 'admin' && (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {allUsers.map(u => (
-                  <div key={u.uid} onClick={() => setSelectedUserUid(u.uid)} className="bg-white p-7 rounded-[3rem] border border-slate-100 shadow-sm flex flex-col justify-between group hover:shadow-2xl transition-all cursor-pointer relative overflow-hidden text-left">
-                    <div className="flex items-center gap-5 mb-6">
-                      <div className={`w-16 h-16 rounded-[2rem] ${u.isActive ? 'bg-indigo-50' : 'bg-slate-100'} flex items-center justify-center font-black text-2xl ${u.isActive ? 'text-indigo-600' : 'text-slate-400'}`}>{u.name?.[0] || 'U'}</div>
-                      <div className="truncate flex-1"><h5 className="font-black text-xl text-slate-800">{u.name}</h5><p className="text-[10px] text-slate-400 font-bold">ID: {u.workId}</p></div>
+                {allUsers.map(u => {
+                  const userRecords = records.filter(r => r.uid === u.uid);
+                  const thisMonthRecords = userRecords.filter(r => r.date?.startsWith(new Date().toISOString().slice(0, 7)));
+                  const totalHours = thisMonthRecords.reduce((sum, r) => sum + (r.totalHours || 0), 0);
+                  const attendDays = thisMonthRecords.length;
+
+                  return (
+                    <div key={u.uid} className="bg-white p-7 rounded-[3rem] border border-slate-100 shadow-sm flex flex-col justify-between group hover:shadow-2xl transition-all relative overflow-hidden text-left">
+                      <div className="flex items-center gap-5 mb-4">
+                        <div className={`w-16 h-16 rounded-[2rem] ${u.isActive ? 'bg-indigo-50' : 'bg-slate-100'} flex items-center justify-center font-black text-2xl ${u.isActive ? 'text-indigo-600' : 'text-slate-400'}`}>{u.name?.[0] || 'U'}</div>
+                        <div className="truncate flex-1"><h5 className="font-black text-xl text-slate-800">{u.name}</h5><p className="text-[10px] text-slate-400 font-bold">ID: {u.workId}</p></div>
+                      </div>
+
+                      {/* 本月工时统计 */}
+                      <div className="bg-slate-50 p-3 rounded-lg mb-4 text-center">
+                        <p className="text-[10px] font-black text-slate-500 uppercase mb-1">本月工时</p>
+                        <p className="text-lg font-black text-indigo-600">{totalHours.toFixed(1)}h</p>
+                        <p className="text-[9px] text-slate-400">出勤 {attendDays} 天</p>
+                      </div>
+
+                      <div className="space-y-2 mb-4">
+                        <button onClick={(e) => { e.stopPropagation(); updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid), { isRemoteEnabled: !u.isRemoteEnabled }).catch(err => notify('更新异地打卡失败', 'error')); }} className={`w-full py-2.5 ${u.isRemoteEnabled ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'} rounded-lg text-[9px] font-black uppercase shadow transition-all hover:shadow-md`}>{u.isRemoteEnabled ? '✓ 支持异地打卡' : '✗ 禁止异地打卡'}</button>
+                      </div>
+
+                      <div className="flex gap-2 flex-col">
+                        <button onClick={() => setSelectedUserUid(u.uid)} className="w-full py-3 bg-indigo-100 text-indigo-600 hover:bg-indigo-200 rounded-xl text-[10px] font-black uppercase shadow transition-all">
+                          📊 查看详细工时
+                        </button>
+                        <div className="flex gap-2">
+                          <button onClick={(e) => { e.stopPropagation(); updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid), { isActive: !u.isActive }).catch(err => notify('更新状态失败', 'error')); }} className={`flex-1 py-3 ${u.isActive ? 'bg-slate-900 hover:bg-slate-800' : 'bg-emerald-600 hover:bg-emerald-700'} text-white rounded-xl text-[10px] font-black uppercase shadow-lg transition-all`}>{u.isActive ? '锁定' : '激活'}</button>
+                          <button onClick={(e) => { e.stopPropagation(); if(window.confirm(`确认删除 ${u.name} ？`)) { updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid), { isActive: false, isDeleted: true, deletedAt: new Date().toISOString() }).then(() => notify('成员已删除', 'success')).catch(err => notify('删除失败', 'error')); } }} className="flex-1 py-3 bg-rose-100 text-rose-600 hover:bg-rose-200 rounded-xl text-[10px] font-black uppercase shadow transition-all">删除</button>
+                        </div>
+                      </div>
                     </div>
-                    <div className="space-y-2 mb-4">
-                      <button onClick={(e) => { e.stopPropagation(); updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid), { isRemoteEnabled: !u.isRemoteEnabled }).catch(err => notify('更新异地打卡失败', 'error')); }} className={`w-full py-2.5 ${u.isRemoteEnabled ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'} rounded-lg text-[9px] font-black uppercase shadow transition-all hover:shadow-md`}>{u.isRemoteEnabled ? '✓ 支持异地打卡' : '✗ 禁止异地打卡'}</button>
-                    </div>
-                    <div className="flex gap-3">
-                      <button onClick={(e) => { e.stopPropagation(); updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid), { isActive: !u.isActive }).catch(err => notify('更新状态失败', 'error')); }} className={`flex-1 py-3 ${u.isActive ? 'bg-slate-900 hover:bg-slate-800' : 'bg-emerald-600 hover:bg-emerald-700'} text-white rounded-xl text-[10px] font-black uppercase shadow-lg transition-all`}>{u.isActive ? '锁定' : '激活'}</button>
-                      <button onClick={(e) => { e.stopPropagation(); if(window.confirm(`确认删除 ${u.name} ？`)) { updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid), { isActive: false, isDeleted: true, deletedAt: new Date().toISOString() }).then(() => notify('成员已删除', 'success')).catch(err => notify('删除失败', 'error')); } }} className="flex-1 py-3 bg-rose-100 text-rose-600 hover:bg-rose-200 rounded-xl text-[10px] font-black uppercase shadow transition-all">删除</button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
