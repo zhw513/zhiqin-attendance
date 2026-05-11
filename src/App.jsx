@@ -169,18 +169,51 @@ const App = () => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       if (u) {
         setUser(u);
-        const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid);
+        // 优先从 localStorage 获取已保存的 workId 查找用户
+        const savedWorkId = localStorage.getItem('loggedInWorkId');
+        const lookupDocId = savedWorkId || u.uid;
+
+        const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', lookupDocId);
         onSnapshot(userDocRef, (snap) => {
           if (snap.exists()) {
-            setProfile(snap.data());
+            const p = snap.data();
+            // 更新 uid 确保后续设备切换也能找到
+            if (p.uid !== u.uid && savedWorkId) {
+              updateDoc(userDocRef, { uid: u.uid }).catch(() => {});
+            }
+            setProfile(p);
+            setAuthMode('app');
             setLoading(false);
+          } else if (savedWorkId) {
+            // 如果按 savedWorkId 没找到，扫描全表
+            const usersCol = collection(db, 'artifacts', appId, 'public', 'data', 'users');
+            const unsubSearch = onSnapshot(usersCol, (snapshot) => {
+              const foundDoc = snapshot.docs.find(doc => doc.data().workId === savedWorkId);
+              if (foundDoc) {
+                const p = foundDoc.data();
+                if (p.uid !== u.uid) {
+                  updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', foundDoc.id), { uid: u.uid }).catch(() => {});
+                }
+                setProfile(p);
+                setAuthMode('app');
+              } else {
+                setProfile({ uid: u.uid, role: 'staff', isActive: false, name: '', workId: '' });
+              }
+              setLoading(false);
+            }, (err) => {
+              console.error("Profile search error", err);
+              setProfile({ uid: u.uid, role: 'staff', isActive: false, name: '', workId: '' });
+              setLoading(false);
+            });
+            return unsubSearch;
           } else {
-            // 如果按 uid 没找到，说明可能是新用户，按 uid 字段查找
+            // 没有保存的 workId，回退到按 uid 字段查找
             const usersCol = collection(db, 'artifacts', appId, 'public', 'data', 'users');
             const unsubSearch = onSnapshot(usersCol, (snapshot) => {
               const foundDoc = snapshot.docs.find(doc => doc.data().uid === u.uid);
               if (foundDoc) {
                 setProfile(foundDoc.data());
+                setAuthMode('app');
               } else {
                 setProfile({ uid: u.uid, role: 'staff', isActive: false, name: '', workId: '' });
               }
@@ -203,7 +236,26 @@ const App = () => {
     return () => unsubscribe();
   }, []);
 
-  // 2. 数据实时同步
+  // 2. 单设备登录监控
+  useEffect(() => {
+    if (!user || !profile?.isActive || !profile?.workId) return;
+    const savedSessionId = localStorage.getItem('sessionId');
+    if (!savedSessionId) return;
+
+    const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', profile.workId);
+    const unsubSession = onSnapshot(userRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.sessionId && data.sessionId !== savedSessionId) {
+          notify("该账号已在其他设备登录，当前会话已退出", "warning");
+          handleLogout();
+        }
+      }
+    }, () => {});
+    return () => unsubSession();
+  }, [user, profile]);
+
+  // 3. 数据实时同步
   useEffect(() => {
     if (!user || !profile?.isActive) return;
 
@@ -270,6 +322,32 @@ const App = () => {
 
   const activeRecord = useMemo(() => user ? records.find(r => r.uid === user.uid && !r.clockOut) : null, [records, user]);
   const onlineStaff = useMemo(() => records.filter(r => !r.clockOut).map(r => ({ ...r, currentH: ((Date.now() - r.startMillis) / 3600000).toFixed(2) })), [records]);
+
+  // --- 退出登录（自动下卡）---
+  const handleLogout = async () => {
+    if (activeRecord) {
+      const now = new Date();
+      const duration = parseFloat(((Date.now() - activeRecord.startMillis) / 3600000).toFixed(2));
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'attendance', activeRecord.id), {
+        clockOut: now.toTimeString().slice(0, 5),
+        totalHours: duration,
+        updatedAt: serverTimestamp()
+      }).catch(err => console.error("Auto clock-out error:", err));
+    }
+    if (profile?.workId) {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', profile.workId), {
+        sessionId: null
+      }).catch(() => {});
+    }
+    localStorage.removeItem('loggedInWorkId');
+    localStorage.removeItem('sessionId');
+    setProfile(null);
+    setUser(null);
+    setAuthMode('choose');
+    setActiveTab('dashboard');
+    setSelectedUserUid(null);
+    notify("已安全退出，打卡记录已保存", "success");
+  };
 
   // --- 管理员：Excel/CSV 全量报表导出 ---
   const handleExport = () => {
@@ -434,6 +512,8 @@ const App = () => {
                     registrationMethod: 'invite_code'
                   });
                   notify(`✓ 注册成功！您的工号是：${newWorkId}`, "success");
+                  // 保存 workId 到本地，确保下次自动登录
+                  localStorage.setItem('loggedInWorkId', newWorkId);
                   setTimeout(() => window.location.reload(), 2000);
                 } catch (err) {
                   console.error("Registration error:", err);
@@ -503,14 +583,19 @@ const App = () => {
                     return notify("账户未激活，请等待管理员审批", "warning");
                   }
 
-                  // 登录成功，更新最后登录时间
+                  // 登录成功，保存 workId 到本地并更新 uid 和会话
+                  const sessionId = Math.random().toString(36).substring(2) + Date.now().toString(36);
+                  localStorage.setItem('loggedInWorkId', userData.workId);
+                  localStorage.setItem('sessionId', sessionId);
                   await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', userDocId), {
+                    uid: user.uid,
                     lastLoginAt: serverTimestamp(),
-                    lastLoginDevice: getPlatformInfo().type
+                    lastLoginDevice: getPlatformInfo().type,
+                    sessionId: sessionId
                   });
 
                   notify("✓ 登录成功", "success");
-                  setProfile(userData);
+                  setProfile({ ...userData, uid: user.uid });
                   setAuthMode('app');
                 } catch (err) {
                   console.error("Login error:", err);
@@ -581,6 +666,10 @@ const App = () => {
                <FileSpreadsheet className="w-5 h-5"/>
                <span className="hidden sm:inline text-xs font-black">导出 Excel 报表</span>
             </button>
+            <button onClick={handleLogout} className="p-2.5 bg-rose-100 text-rose-600 rounded-xl shadow hover:bg-rose-200 transition-all flex items-center gap-2" title="退出登录">
+               <LogOut className="w-5 h-5"/>
+               <span className="hidden sm:inline text-xs font-black">退出</span>
+            </button>
           </div>
         </header>
 
@@ -648,6 +737,20 @@ const App = () => {
                          ))}
                       </div>
                    </div>
+                )}
+
+                {/* 员工个人信息卡片 */}
+                {profile?.role === 'staff' && activeTab === 'dashboard' && !selectedUserUid && (
+                  <div className="bg-white p-6 rounded-[3rem] shadow-xl border border-slate-100">
+                    <div className="flex items-center gap-5">
+                      <div className="w-16 h-16 rounded-[2rem] bg-indigo-600 text-white flex items-center justify-center font-black text-2xl shadow-lg">{profile?.name?.[0] || 'U'}</div>
+                      <div>
+                        <h3 className="text-xl font-black text-slate-800">{profile?.name}</h3>
+                        <p className="text-sm font-bold text-indigo-500">工号: {profile?.workId || 'N/A'}</p>
+                        <p className="text-[10px] text-slate-400">{profile?.role === 'admin' ? '管理员' : '员工'} · {profile?.isRemoteEnabled ? '支持异地打卡' : '现场打卡'}</p>
+                      </div>
+                    </div>
+                  </div>
                 )}
 
                 {activeTab === 'dashboard' && !selectedUserUid && (
