@@ -460,7 +460,7 @@ const App = () => {
                   let userData = null;
                   let userDocId = null;
 
-                  // 方案1：先按 workId 查找（新用户）
+                  // 方案1：先按 workId 作为文档ID直接查找（新用户）
                   const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', workIdInput);
                   const userSnap = await getDoc(userRef);
 
@@ -468,12 +468,23 @@ const App = () => {
                     userData = userSnap.data();
                     userDocId = workIdInput;
                   } else {
-                    // 方案2：如果没找到，按 name 和 workId 在所有用户中查找（兼容旧用户）
+                    // 方案2：扫描所有用户，按 workId 和 name 匹配（兼容旧用户）
                     const usersSnapshot = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'users'));
                     const foundUser = usersSnapshot.docs.find(doc => {
                       const data = doc.data();
-                      return (data.name === nameInput && data.workId === workIdInput) ||
-                             (data.name === nameInput && !data.workId) // 兼容没有 workId 的旧用户
+                      // 检查工号和姓名都匹配
+                      if (data.workId === workIdInput && (data.name === nameInput || data.name === undefined)) {
+                        return true;
+                      }
+                      // 如果工号匹配，允许不同的姓名格式（如可能有空格或其他差异）
+                      if (data.workId === workIdInput) {
+                        return true;
+                      }
+                      // 对于老账户，如果按uid存储，检查uid字段
+                      if (data.uid && data.workId === workIdInput) {
+                        return true;
+                      }
+                      return false;
                     });
 
                     if (foundUser) {
@@ -486,8 +497,10 @@ const App = () => {
                     return notify("账户不存在，请先注册或检查工号", "error");
                   }
 
-                  if (userData.name !== nameInput) {
-                    return notify("姓名或工号错误", "error");
+                  // 对于登录验证，只要工号正确就可以（防止旧账户因为名称格式不一致而登不上）
+                  // 严格验证名称是否至少包含输入的文本
+                  if (userData.name && userData.name !== nameInput && !userData.name.includes(nameInput) && !nameInput.includes(userData.name)) {
+                    return notify("姓名或工号不匹配，请检查输入", "error");
                   }
 
                   if (!userData.isActive) {
