@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
   Clock, Users, BarChart3, Settings, LogOut, LogIn, Download, 
   Calendar, ShieldCheck, XCircle, Smartphone, MapPin, RefreshCw, 
@@ -236,7 +236,7 @@ const App = () => {
     return () => unsubscribe();
   }, []);
 
-  // 2. 单设备登录监控
+  // 2. 单设备登录监控（强制自动下卡）
   useEffect(() => {
     if (!user || !profile?.isActive || !profile?.workId) return;
     const savedSessionId = localStorage.getItem('sessionId');
@@ -248,12 +248,12 @@ const App = () => {
         const data = snap.data();
         if (data.sessionId && data.sessionId !== savedSessionId) {
           notify("该账号已在其他设备登录，当前会话已退出", "warning");
-          handleLogout();
+          handleLogout(true);
         }
       }
     }, () => {});
     return () => unsubSession();
-  }, [user, profile]);
+  }, [user, profile, handleLogout]);
 
   // 3. 数据实时同步
   useEffect(() => {
@@ -262,7 +262,8 @@ const App = () => {
     const recordsCol = collection(db, 'artifacts', appId, 'public', 'data', 'attendance');
     const unsubRecords = onSnapshot(recordsCol, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      const filtered = profile?.role === 'admin' ? data : data.filter(r => r.uid === user.uid);
+      // 按工号过滤，确保跨设备记录都能看到
+      const filtered = profile?.role === 'admin' ? data : data.filter(r => r.workId === profile.workId);
       setRecords(filtered);
     }, (err) => console.error("Records sync error", err));
 
@@ -321,14 +322,17 @@ const App = () => {
   };
 
   const activeRecord = useMemo(() => user ? records.find(r => r.uid === user.uid && !r.clockOut) : null, [records, user]);
+  const activeRecordRef = useRef(null);
+  useEffect(() => { activeRecordRef.current = activeRecord; }, [activeRecord]);
   const onlineStaff = useMemo(() => records.filter(r => !r.clockOut).map(r => ({ ...r, currentH: ((Date.now() - r.startMillis) / 3600000).toFixed(2) })), [records]);
 
   // --- 退出登录（自动下卡）---
-  const handleLogout = async () => {
-    if (activeRecord) {
+  const handleLogout = useCallback(async (silent = false) => {
+    const ar = activeRecordRef.current;
+    if (ar) {
       const now = new Date();
-      const duration = parseFloat(((Date.now() - activeRecord.startMillis) / 3600000).toFixed(2));
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'attendance', activeRecord.id), {
+      const duration = parseFloat(((Date.now() - ar.startMillis) / 3600000).toFixed(2));
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'attendance', ar.id), {
         clockOut: now.toTimeString().slice(0, 5),
         totalHours: duration,
         updatedAt: serverTimestamp()
@@ -346,8 +350,8 @@ const App = () => {
     setAuthMode('choose');
     setActiveTab('dashboard');
     setSelectedUserUid(null);
-    notify("已安全退出，打卡记录已保存", "success");
-  };
+    if (!silent) notify("已安全退出，打卡记录已保存", "success");
+  }, [profile?.workId]);
 
   // --- 管理员：Excel/CSV 全量报表导出 ---
   const handleExport = () => {
@@ -371,6 +375,8 @@ const App = () => {
 
   const handleClockIn = async () => {
     if (!user || !profile) return notify("用户信息加载中，请稍候", "info");
+    // 防重复打卡：检查该工号是否已有进行中的考勤记录
+    if (activeRecord) return notify("您已有进行中的打卡记录，请先签退", "warning");
     const isIntegrityOk = await checkIntegrity();
     if (!isIntegrityOk || integrityStatus === 'suspicious') return;
     if (locationStatus !== 'success' && !profile?.isRemoteEnabled) return notify("范围校验失败：请在规定区域打卡或申请异地打卡权限", "error");
@@ -628,13 +634,14 @@ const App = () => {
               <NavItem active={activeTab === 'review'} onClick={() => { setActiveTab('review'); setSelectedUserUid(null); }} icon={<ShieldCheck />} label="加班审批" />
               <div className="relative">
                 <NavItem active={activeTab === 'users'} onClick={() => setActiveTab('users')} icon={<Users />} label="全员名册" />
-                {allUsers.filter(u => !u.isActive).length > 0 && (
+                {allUsers.filter(u => !u.isActive && !u.isDeleted).length > 0 && (
                   <span className="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white text-[9px] font-black rounded-full flex items-center justify-center animate-pulse">
-                    {allUsers.filter(u => !u.isActive).length}
+                    {allUsers.filter(u => !u.isActive && !u.isDeleted).length}
                   </span>
                 )}
               </div>
               <NavItem active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<Settings />} label="合规设定" />
+              <NavItem active={activeTab === 'archive'} onClick={() => { setActiveTab('archive'); setSelectedUserUid(null); }} icon={<XCircle />} label="回收站" />
             </>
           )}
         </nav>
@@ -653,22 +660,30 @@ const App = () => {
       </aside>
 
       <main className="flex-1 flex flex-col h-screen overflow-hidden pb-20 md:pb-0">
-        <header className="h-20 bg-white/80 backdrop-blur-md border-b border-slate-100 px-6 md:px-12 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-4">
+        <header className="bg-white/80 backdrop-blur-md border-b border-slate-100 px-4 md:px-12 flex items-center justify-between shrink-0 min-h-[5rem] flex-wrap gap-2 py-2">
+          <div className="flex items-center gap-3">
              {selectedUserUid && <button onClick={() => setSelectedUserUid(null)} className="p-2 bg-slate-100 rounded-xl"><ChevronLeft className="w-6 h-6"/></button>}
-             <h2 className="text-xl font-black text-slate-900 tracking-tight">
-                {selectedUserUid ? '成员考勤详表' : (activeTab === 'dashboard' ? '实时工作状态' : activeTab === 'history' ? '考勤审计档案' : '系统管理中心')}
-             </h2>
+             <div className="flex items-center gap-3">
+               <div className="w-9 h-9 md:hidden rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black text-sm shrink-0">{profile?.name?.[0] || 'U'}</div>
+               <div>
+                 <h2 className="text-lg md:text-xl font-black text-slate-900 tracking-tight leading-tight">
+                    {selectedUserUid ? '成员考勤详表' : (activeTab === 'dashboard' ? '实时工作状态' : activeTab === 'history' ? '考勤审计档案' : activeTab === 'archive' ? '回收站' : '系统管理中心')}
+                 </h2>
+                 <p className="text-[10px] text-indigo-500 font-bold md:hidden">{profile?.name} · {profile?.workId}</p>
+               </div>
+             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {!isOnline && <div className="px-4 py-1.5 bg-rose-100 text-rose-600 rounded-full text-[10px] font-black animate-pulse">网络离线</div>}
-            <button onClick={handleExport} className="p-2.5 bg-slate-900 text-white rounded-xl shadow-lg hover:bg-black transition-all flex items-center gap-2">
-               <FileSpreadsheet className="w-5 h-5"/>
-               <span className="hidden sm:inline text-xs font-black">导出 Excel 报表</span>
-            </button>
-            <button onClick={handleLogout} className="p-2.5 bg-rose-100 text-rose-600 rounded-xl shadow hover:bg-rose-200 transition-all flex items-center gap-2" title="退出登录">
-               <LogOut className="w-5 h-5"/>
-               <span className="hidden sm:inline text-xs font-black">退出</span>
+          <div className="flex items-center gap-1.5">
+            {!isOnline && <div className="px-2 py-1 bg-rose-100 text-rose-600 rounded-full text-[9px] font-black animate-pulse">离线</div>}
+            {profile?.role === 'admin' && (
+              <button onClick={handleExport} className="p-2 md:p-2.5 bg-slate-900 text-white rounded-xl shadow-lg hover:bg-black transition-all flex items-center gap-1.5">
+                 <FileSpreadsheet className="w-4 h-4 md:w-5 md:h-5"/>
+                 <span className="text-[10px] md:text-xs font-black">导出</span>
+              </button>
+            )}
+            <button onClick={() => handleLogout()} className="p-2 md:p-2.5 bg-rose-500 text-white rounded-xl shadow hover:bg-rose-600 transition-all flex items-center gap-1.5">
+               <LogOut className="w-4 h-4 md:w-5 md:h-5"/>
+               <span className="text-[10px] md:text-xs font-black">退出</span>
             </button>
           </div>
         </header>
@@ -677,14 +692,14 @@ const App = () => {
           <div className="max-w-5xl mx-auto space-y-8 pb-10">
             {profile?.role === 'admin' && activeTab === 'dashboard' && !selectedUserUid && (
                <>
-               {allUsers.filter(u => !u.isActive).length > 0 && (
+               {allUsers.filter(u => !u.isActive && !u.isDeleted).length > 0 && (
                  <div className="bg-amber-50 border-2 border-amber-300 rounded-[3rem] p-6 flex items-center justify-between animate-in slide-in-from-top-4 shadow-lg">
                    <div className="flex items-center gap-4">
                      <div className="w-14 h-14 bg-amber-500 rounded-2xl flex items-center justify-center">
                        <Users className="text-white w-7 h-7" />
                      </div>
                      <div>
-                       <p className="text-xl font-black text-amber-800">{allUsers.filter(u => !u.isActive).length} 位成员等待审批</p>
+                       <p className="text-xl font-black text-amber-800">{allUsers.filter(u => !u.isActive && !u.isDeleted).length} 位成员等待审批</p>
                        <p className="text-xs font-bold text-amber-600">他们已提交加入申请，需要你来激活账号</p>
                      </div>
                    </div>
@@ -739,8 +754,8 @@ const App = () => {
                    </div>
                 )}
 
-                {/* 员工个人信息卡片 */}
-                {profile?.role === 'staff' && activeTab === 'dashboard' && !selectedUserUid && (
+                {/* 员工个人信息卡片 - 所有tab可见 */}
+                {profile?.role === 'staff' && !selectedUserUid && (
                   <div className="bg-white p-6 rounded-[3rem] shadow-xl border border-slate-100">
                     <div className="flex items-center gap-5">
                       <div className="w-16 h-16 rounded-[2rem] bg-indigo-600 text-white flex items-center justify-center font-black text-2xl shadow-lg">{profile?.name?.[0] || 'U'}</div>
@@ -818,7 +833,7 @@ const App = () => {
             
             {activeTab === 'users' && profile?.role === 'admin' && (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {allUsers.map(u => {
+                {allUsers.filter(u => !u.isDeleted).map(u => {
                   const userRecords = records.filter(r => r.uid === u.uid);
                   const thisMonthRecords = userRecords.filter(r => r.date?.startsWith(new Date().toISOString().slice(0, 7)));
                   const totalHours = thisMonthRecords.reduce((sum, r) => sum + (r.totalHours || 0), 0);
@@ -848,12 +863,55 @@ const App = () => {
                         </button>
                         <div className="flex gap-2">
                           <button onClick={(e) => { e.stopPropagation(); updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.id), { isActive: !u.isActive }).catch(err => notify('更新状态失败', 'error')); }} className={`flex-1 py-3 ${u.isActive ? 'bg-slate-900 hover:bg-slate-800' : 'bg-emerald-600 hover:bg-emerald-700'} text-white rounded-xl text-[10px] font-black uppercase shadow-lg transition-all`}>{u.isActive ? '锁定' : '激活'}</button>
-                          <button onClick={(e) => { e.stopPropagation(); if(window.confirm(`确认删除 ${u.name} ？`)) { updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.id), { isActive: false, isDeleted: true, deletedAt: new Date().toISOString() }).then(() => notify('成员已删除', 'success')).catch(err => notify('删除失败', 'error')); } }} className="flex-1 py-3 bg-rose-100 text-rose-600 hover:bg-rose-200 rounded-xl text-[10px] font-black uppercase shadow transition-all">删除</button>
+                          <button onClick={(e) => { e.stopPropagation(); if(window.confirm(`确认删除 ${u.name} ？`)) { updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.id), { isActive: false, isDeleted: true, deletedAt: new Date().toISOString(), deletedBy: profile?.name || '未知管理员', deletedByWorkId: profile?.workId || 'N/A' }).then(() => notify('成员已删除，可在回收站查看', 'success')).catch(err => notify('删除失败', 'error')); } }} className="flex-1 py-3 bg-rose-100 text-rose-600 hover:bg-rose-200 rounded-xl text-[10px] font-black uppercase shadow transition-all">删除</button>
                         </div>
                       </div>
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {activeTab === 'archive' && profile?.role === 'admin' && (
+              <div className="space-y-5 animate-in fade-in">
+                <div className="bg-white p-10 rounded-[3.5rem] shadow-xl border border-slate-100">
+                  <h3 className="text-2xl font-black text-slate-900 mb-6 flex items-center gap-3">
+                    <XCircle className="text-rose-500"/> 已删除成员 · 回收站
+                  </h3>
+                  <p className="text-xs text-slate-400 font-bold mb-8">被删除的成员将在此处保留记录，包含操作管理员信息</p>
+                  {allUsers.filter(u => u.isDeleted).length === 0 ? (
+                    <div className="py-16 text-center text-slate-300 font-black tracking-widest uppercase">回收站为空</div>
+                  ) : (
+                    <div className="space-y-4">
+                      {allUsers.filter(u => u.isDeleted).map(u => (
+                        <div key={u.id} className="bg-slate-50 p-6 rounded-[2rem] border border-slate-200 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-2xl bg-rose-100 flex items-center justify-center font-black text-rose-500 text-lg">{u.name?.[0] || 'U'}</div>
+                            <div>
+                              <h5 className="font-black text-lg text-slate-500 line-through">{u.name}</h5>
+                              <p className="text-[10px] text-slate-400 font-bold">工号: {u.workId || 'N/A'}</p>
+                            </div>
+                          </div>
+                          <div className="text-right space-y-1">
+                            <p className="text-[10px] font-black text-rose-500 uppercase">
+                              删除人: {u.deletedBy || '未知'} ({u.deletedByWorkId || 'N/A'})
+                            </p>
+                            <p className="text-[9px] text-slate-400">
+                              删除时间: {u.deletedAt ? new Date(u.deletedAt).toLocaleString('zh-CN') : '未知'}
+                            </p>
+                          </div>
+                          <button onClick={async (e) => {
+                            e.stopPropagation();
+                            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.id), { isActive: true, isDeleted: false, deletedBy: null, deletedByWorkId: null, deletedAt: null });
+                            notify(`${u.name} 已恢复`, "success");
+                          }} className="px-6 py-3 bg-emerald-100 text-emerald-700 rounded-xl text-[10px] font-black uppercase shadow hover:bg-emerald-200 transition-all whitespace-nowrap">
+                            恢复成员
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -939,15 +997,19 @@ const App = () => {
             <Wifi className="w-3 h-3" /> 网络已断开，部分功能不可用
           </div>
         )}
-        <div className="fixed bottom-0 left-0 right-0 h-20 bg-white/90 backdrop-blur-xl border-t flex md:hidden items-center justify-around px-6 z-40">
+        <div className="fixed bottom-0 left-0 right-0 h-20 bg-white/90 backdrop-blur-xl border-t flex md:hidden items-center justify-around px-3 z-40">
           <MobileNavItem active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<Smartphone />} />
           <MobileNavItem active={activeTab === 'history'} onClick={() => setActiveTab('history')} icon={<Calendar />} />
           {profile?.role === 'admin' && (
             <>
               <MobileNavItem active={activeTab === 'review'} onClick={() => setActiveTab('review')} icon={<BarChart3 />} />
               <MobileNavItem active={activeTab === 'users'} onClick={() => setActiveTab('users')} icon={<Users />} />
+              <MobileNavItem active={activeTab === 'archive'} onClick={() => setActiveTab('archive')} icon={<XCircle />} />
             </>
           )}
+          <button onClick={() => handleLogout()} className="p-4 rounded-2xl text-rose-400 hover:text-rose-600 transition-all">
+            <LogOut className="w-6 h-6" />
+          </button>
         </div>
       </main>
     </div>
