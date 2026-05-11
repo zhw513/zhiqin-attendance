@@ -236,6 +236,38 @@ const App = () => {
     return () => unsubscribe();
   }, []);
 
+  const activeRecord = useMemo(() => user ? records.find(r => r.uid === user.uid && !r.clockOut) : null, [records, user]);
+  const activeRecordRef = useRef(null);
+  useEffect(() => { activeRecordRef.current = activeRecord; }, [activeRecord]);
+  const onlineStaff = useMemo(() => records.filter(r => !r.clockOut).map(r => ({ ...r, currentH: ((Date.now() - r.startMillis) / 3600000).toFixed(2) })), [records]);
+
+  // --- 退出登录（自动下卡）---
+  const handleLogout = useCallback(async (silent = false) => {
+    const ar = activeRecordRef.current;
+    if (ar) {
+      const now = new Date();
+      const duration = parseFloat(((Date.now() - ar.startMillis) / 3600000).toFixed(2));
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'attendance', ar.id), {
+        clockOut: now.toTimeString().slice(0, 5),
+        totalHours: duration,
+        updatedAt: serverTimestamp()
+      }).catch(err => console.error("Auto clock-out error:", err));
+    }
+    if (profile?.workId) {
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', profile.workId), {
+        sessionId: null
+      }).catch(() => {});
+    }
+    localStorage.removeItem('loggedInWorkId');
+    localStorage.removeItem('sessionId');
+    setProfile(null);
+    setUser(null);
+    setAuthMode('choose');
+    setActiveTab('dashboard');
+    setSelectedUserUid(null);
+    if (!silent) notify("已安全退出，打卡记录已保存", "success");
+  }, [profile?.workId]);
+
   // 2. 单设备登录监控（强制自动下卡）
   useEffect(() => {
     if (!user || !profile?.isActive || !profile?.workId) return;
@@ -348,38 +380,6 @@ const App = () => {
     const a = Math.sin((lat2-lat1)*Math.PI/360)**2 + Math.cos(p1)*Math.cos(p2)*Math.sin((lon2-lon1)*Math.PI/360)**2;
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   };
-
-  const activeRecord = useMemo(() => user ? records.find(r => r.uid === user.uid && !r.clockOut) : null, [records, user]);
-  const activeRecordRef = useRef(null);
-  useEffect(() => { activeRecordRef.current = activeRecord; }, [activeRecord]);
-  const onlineStaff = useMemo(() => records.filter(r => !r.clockOut).map(r => ({ ...r, currentH: ((Date.now() - r.startMillis) / 3600000).toFixed(2) })), [records]);
-
-  // --- 退出登录（自动下卡）---
-  const handleLogout = useCallback(async (silent = false) => {
-    const ar = activeRecordRef.current;
-    if (ar) {
-      const now = new Date();
-      const duration = parseFloat(((Date.now() - ar.startMillis) / 3600000).toFixed(2));
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'attendance', ar.id), {
-        clockOut: now.toTimeString().slice(0, 5),
-        totalHours: duration,
-        updatedAt: serverTimestamp()
-      }).catch(err => console.error("Auto clock-out error:", err));
-    }
-    if (profile?.workId) {
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', profile.workId), {
-        sessionId: null
-      }).catch(() => {});
-    }
-    localStorage.removeItem('loggedInWorkId');
-    localStorage.removeItem('sessionId');
-    setProfile(null);
-    setUser(null);
-    setAuthMode('choose');
-    setActiveTab('dashboard');
-    setSelectedUserUid(null);
-    if (!silent) notify("已安全退出，打卡记录已保存", "success");
-  }, [profile?.workId]);
 
   // --- 管理员：Excel/CSV 全量报表导出 ---
   const handleExport = () => {
