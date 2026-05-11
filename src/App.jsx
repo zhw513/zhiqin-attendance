@@ -713,7 +713,7 @@ const App = () => {
                   const attendDays = thisMonthRecords.length;
 
                   return (
-                    <div key={u.uid} className="bg-white p-7 rounded-[3rem] border border-slate-100 shadow-sm flex flex-col justify-between group hover:shadow-2xl transition-all relative overflow-hidden text-left">
+                    <div key={u.id} className="bg-white p-7 rounded-[3rem] border border-slate-100 shadow-sm flex flex-col justify-between group hover:shadow-2xl transition-all relative overflow-hidden text-left">
                       <div className="flex items-center gap-5 mb-4">
                         <div className={`w-16 h-16 rounded-[2rem] ${u.isActive ? 'bg-indigo-50' : 'bg-slate-100'} flex items-center justify-center font-black text-2xl ${u.isActive ? 'text-indigo-600' : 'text-slate-400'}`}>{u.name?.[0] || 'U'}</div>
                         <div className="truncate flex-1"><h5 className="font-black text-xl text-slate-800">{u.name}</h5><p className="text-[10px] text-slate-400 font-bold">ID: {u.workId}</p></div>
@@ -727,7 +727,7 @@ const App = () => {
                       </div>
 
                       <div className="space-y-2 mb-4">
-                        <button onClick={(e) => { e.stopPropagation(); updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid), { isRemoteEnabled: !u.isRemoteEnabled }).catch(err => notify('更新异地打卡失败', 'error')); }} className={`w-full py-2.5 ${u.isRemoteEnabled ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'} rounded-lg text-[9px] font-black uppercase shadow transition-all hover:shadow-md`}>{u.isRemoteEnabled ? '✓ 支持异地打卡' : '✗ 禁止异地打卡'}</button>
+                        <button onClick={(e) => { e.stopPropagation(); updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.id), { isRemoteEnabled: !u.isRemoteEnabled }).catch(err => notify('更新异地打卡失败', 'error')); }} className={`w-full py-2.5 ${u.isRemoteEnabled ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'} rounded-lg text-[9px] font-black uppercase shadow transition-all hover:shadow-md`}>{u.isRemoteEnabled ? '✓ 支持异地打卡' : '✗ 禁止异地打卡'}</button>
                       </div>
 
                       <div className="flex gap-2 flex-col">
@@ -735,8 +735,8 @@ const App = () => {
                           📊 查看详细工时
                         </button>
                         <div className="flex gap-2">
-                          <button onClick={(e) => { e.stopPropagation(); updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid), { isActive: !u.isActive }).catch(err => notify('更新状态失败', 'error')); }} className={`flex-1 py-3 ${u.isActive ? 'bg-slate-900 hover:bg-slate-800' : 'bg-emerald-600 hover:bg-emerald-700'} text-white rounded-xl text-[10px] font-black uppercase shadow-lg transition-all`}>{u.isActive ? '锁定' : '激活'}</button>
-                          <button onClick={(e) => { e.stopPropagation(); if(window.confirm(`确认删除 ${u.name} ？`)) { updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid), { isActive: false, isDeleted: true, deletedAt: new Date().toISOString() }).then(() => notify('成员已删除', 'success')).catch(err => notify('删除失败', 'error')); } }} className="flex-1 py-3 bg-rose-100 text-rose-600 hover:bg-rose-200 rounded-xl text-[10px] font-black uppercase shadow transition-all">删除</button>
+                          <button onClick={(e) => { e.stopPropagation(); updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.id), { isActive: !u.isActive }).catch(err => notify('更新状态失败', 'error')); }} className={`flex-1 py-3 ${u.isActive ? 'bg-slate-900 hover:bg-slate-800' : 'bg-emerald-600 hover:bg-emerald-700'} text-white rounded-xl text-[10px] font-black uppercase shadow-lg transition-all`}>{u.isActive ? '锁定' : '激活'}</button>
+                          <button onClick={(e) => { e.stopPropagation(); if(window.confirm(`确认删除 ${u.name} ？`)) { updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.id), { isActive: false, isDeleted: true, deletedAt: new Date().toISOString() }).then(() => notify('成员已删除', 'success')).catch(err => notify('删除失败', 'error')); } }} className="flex-1 py-3 bg-rose-100 text-rose-600 hover:bg-rose-200 rounded-xl text-[10px] font-black uppercase shadow transition-all">删除</button>
                         </div>
                       </div>
                     </div>
