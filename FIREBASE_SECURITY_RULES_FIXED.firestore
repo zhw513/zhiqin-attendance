@@ -2,52 +2,39 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ============================================
-    // 用户信息表 (users)
-    // ============================================
+    // 用户信息表 (users) — 文档 ID = 工号 (workId)
     match /artifacts/{appId}/public/data/users/{userId} {
-
-      // 员工：只能读取和修改自己的数据
-      allow read: if request.auth.uid == resource.data.uid;
-
-      allow update: if request.auth.uid == resource.data.uid &&
+      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
+      allow read: if isAdmin(appId);
+      allow update: if request.auth != null && resource.data.uid == request.auth.uid &&
                        request.resource.data.keys().hasOnly(['name', 'workId', 'isRemoteEnabled', 'lastLoginAt', 'lastLoginDevice', 'sessionId']) &&
                        resource.data.role == request.resource.data.role &&
                        resource.data.isActive == request.resource.data.isActive;
-
-      // 管理员：可以读取所有用户，可以修改用户状态（删除、锁定等）
-      allow read: if isAdmin(appId);
-
       allow update: if isAdmin(appId) &&
                        request.resource.data.keys().hasOnly(['uid', 'name', 'workId', 'role', 'isActive', 'isRemoteEnabled', 'isDeleted', 'deletedAt', 'deletedBy', 'deletedByWorkId', 'createdAt', 'registrationMethod', 'lastLoginAt', 'lastLoginDevice', 'sessionId']);
-
       allow delete: if isAdmin(appId);
-
-      // ✅ 【修复1】新用户注册：移除了 "request.auth.uid == userId" 的限制
-      // 改为只检查 uid 字段与当前用户匹配，允许用 workId 作为文档ID
       allow create: if request.auth != null &&
                        request.resource.data.uid == request.auth.uid &&
                        request.resource.data.role == 'staff' &&
                        request.resource.data.isActive == true;
     }
 
-    // ============================================
+    // 管理员会话表 (adminSessions) — 文档 ID = auth.uid
+    match /artifacts/{appId}/public/data/adminSessions/{adminId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == adminId;
+      allow update: if request.auth != null && request.auth.uid == adminId;
+      allow delete: if request.auth != null && request.auth.uid == adminId;
+    }
+
     // 打卡记录表 (attendance)
-    // ============================================
     match /artifacts/{appId}/public/data/attendance/{attendanceId} {
-
-      // ===== 员工权限 =====
-      // 员工只能读取自己的打卡记录
-      allow read: if request.auth.uid == resource.data.uid;
-
-      // 员工只能创建自己的打卡记录
+      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
       allow create: if request.auth != null &&
                        request.auth.uid == request.resource.data.uid &&
                        request.resource.data.isApproved == true &&
                        !request.resource.data.keys().hasAny(['approvedBy', 'approvedAt', 'rejectionReason']);
-
-      // 员工只能修改自己的打卡记录 - 只允许更新签退时间和工作总结
-      allow update: if request.auth.uid == resource.data.uid &&
+      allow update: if request.auth != null && resource.data.uid == request.auth.uid &&
                        request.resource.data.keys().hasOnly(['uid', 'userName', 'workId', 'date', 'clockIn', 'clockOut', 'startMillis', 'totalHours', 'platform', 'workMode', 'isApproved', 'isOvertime', 'workSummary', 'createdAt', 'updatedAt', 'auditStatus', 'lastHeartbeat', 'autoClosed', 'autoCloseReason']) &&
                        resource.data.uid == request.resource.data.uid &&
                        resource.data.clockIn == request.resource.data.clockIn &&
@@ -56,74 +43,36 @@ service cloud.firestore {
                        resource.data.isApproved == request.resource.data.isApproved &&
                        resource.data.isOvertime == request.resource.data.isOvertime &&
                        request.resource.data.workSummary.size() <= 500;
-
-      // 员工不能删除打卡记录
       allow delete: if false;
-
-      // ===== 管理员权限 =====
-      // 管理员可以读取所有打卡记录
       allow read: if isAdmin(appId);
-
-      // 管理员可以更新打卡记录进行审批
       allow update: if isAdmin(appId) &&
                        request.resource.data.keys().hasOnly(['uid', 'userName', 'workId', 'date', 'clockIn', 'clockOut', 'startMillis', 'totalHours', 'platform', 'workMode', 'isApproved', 'isOvertime', 'workSummary', 'createdAt', 'updatedAt', 'auditStatus', 'lastHeartbeat', 'autoClosed', 'autoCloseReason', 'approvedBy', 'approvedAt', 'rejectionReason']);
-
-      // 管理员可以删除打卡记录
       allow delete: if isAdmin(appId);
     }
 
-    // ============================================
     // 系统配置表 (settings)
-    // ============================================
     match /artifacts/{appId}/public/data/settings/{document=**} {
-
-      // 所有认证用户可以读取系统配置
       allow read: if request.auth != null;
-
-      // 只有管理员可以修改系统配置
       allow write: if isAdmin(appId);
     }
 
-    // ============================================
     // 审计日志表 (audit_logs)
-    // ============================================
     match /artifacts/{appId}/public/data/audit_logs/{logId} {
-
-      // 任何认证用户可以创建审计日志
       allow create: if request.auth != null &&
                        request.resource.data.userId == request.auth.uid;
-
-      // 用户可以读取自己的日志
       allow read: if request.auth.uid == resource.data.userId;
-
-      // 管理员可以读取所有日志
       allow read: if isAdmin(appId);
-
-      // 禁止修改和删除审计日志（确保日志完整性）
       allow update, delete: if false;
     }
 
-    // ============================================
-    // 辅助函数
-    // ============================================
-
-    // ✅ 【修复2】检查用户是否为管理员
-    // 增强了错误处理，确保数据安全访问
     function isAdmin(appId) {
-      let userDoc = get(/databases/$(database)/documents/artifacts/$(appId)/public/data/users/$(request.auth.uid));
-      return request.auth != null &&
-             userDoc.exists &&
-             userDoc.data.role == 'admin' &&
-             userDoc.data.isActive == true;
+      let session = get(/databases/$(database)/documents/artifacts/$(appId)/public/data/adminSessions/$(request.auth.uid));
+      return request.auth != null && session.exists;
     }
 
-    // 检查用户是否为激活的员工
     function isActiveStaff(appId) {
       let userDoc = get(/databases/$(database)/documents/artifacts/$(appId)/public/data/users/$(request.auth.uid));
-      return request.auth != null &&
-             userDoc.exists &&
-             userDoc.data.role == 'staff' &&
-             userDoc.data.isActive == true;
+      return request.auth != null && userDoc.exists && userDoc.data.role == 'staff' && userDoc.data.isActive == true;
     }
   }
 }

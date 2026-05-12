@@ -8,7 +8,7 @@ import {
 import { initializeApp } from 'firebase/app';
 import {
   getFirestore, collection, doc, setDoc, onSnapshot, updateDoc,
-  addDoc, serverTimestamp, writeBatch, getDoc, getDocs
+  addDoc, serverTimestamp, writeBatch, getDoc, getDocs, deleteDoc
 } from 'firebase/firestore';
 import { 
   getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken 
@@ -184,6 +184,12 @@ const App = () => {
             setProfile(p);
             setAuthMode('app');
             setLoading(false);
+            // 管理员自动登录：写入 adminSessions
+            if (p.role === 'admin') {
+              setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'adminSessions', u.uid), {
+                uid: u.uid, workId: p.workId, createdAt: serverTimestamp()
+              }).catch(() => {});
+            }
           } else if (savedWorkId) {
             // 如果按 savedWorkId 没找到，扫描全表
             const usersCol = collection(db, 'artifacts', appId, 'public', 'data', 'users');
@@ -196,6 +202,11 @@ const App = () => {
                 }
                 setProfile(p);
                 setAuthMode('app');
+                if (p.role === 'admin') {
+                  setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'adminSessions', u.uid), {
+                    uid: u.uid, workId: p.workId, createdAt: serverTimestamp()
+                  }).catch(() => {});
+                }
               } else {
                 setProfile({ uid: u.uid, role: 'staff', isActive: false, name: '', workId: '' });
               }
@@ -212,8 +223,14 @@ const App = () => {
             const unsubSearch = onSnapshot(usersCol, (snapshot) => {
               const foundDoc = snapshot.docs.find(doc => doc.data().uid === u.uid);
               if (foundDoc) {
-                setProfile(foundDoc.data());
+                const fp = foundDoc.data();
+                setProfile(fp);
                 setAuthMode('app');
+                if (fp.role === 'admin') {
+                  setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'adminSessions', u.uid), {
+                    uid: u.uid, workId: fp.workId, createdAt: serverTimestamp()
+                  }).catch(() => {});
+                }
               } else {
                 setProfile({ uid: u.uid, role: 'staff', isActive: false, name: '', workId: '' });
               }
@@ -257,6 +274,10 @@ const App = () => {
       await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', profile.workId), {
         sessionId: null
       }).catch(() => {});
+    }
+    // 清理管理员会话标记
+    if (profile?.role === 'admin' && user?.uid) {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'adminSessions', user.uid)).catch(() => {});
     }
     localStorage.removeItem('loggedInWorkId');
     localStorage.removeItem('sessionId');
@@ -546,10 +567,29 @@ const App = () => {
                     createdAt: serverTimestamp(),
                     registrationMethod: 'invite_code'
                   });
-                  notify(`✓ 注册成功！您的工号是：${newWorkId}`, "success");
-                  // 保存 workId 到本地，确保下次自动登录
+                  // 直接登录，避免 reload 后 auth 未就绪导致无法登录
+                  const sessionId = Math.random().toString(36).substring(2) + Date.now().toString(36);
                   localStorage.setItem('loggedInWorkId', newWorkId);
-                  setTimeout(() => window.location.reload(), 2000);
+                  localStorage.setItem('sessionId', sessionId);
+                  await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', newWorkId), {
+                    uid: user.uid,
+                    lastLoginAt: serverTimestamp(),
+                    lastLoginDevice: getPlatformInfo().type,
+                    sessionId: sessionId
+                  });
+                  setProfile({
+                    uid: user.uid,
+                    name: nameInput,
+                    workId: newWorkId,
+                    role: 'staff',
+                    isActive: true,
+                    isRemoteEnabled: false,
+                    registrationMethod: 'invite_code',
+                    sessionId: sessionId
+                  });
+                  setAuthMode('app');
+                  setLoading(false);
+                  notify(`✓ 注册成功！您的工号是：${newWorkId}`, "success");
                 } catch (err) {
                   console.error("Registration error:", err);
                   notify("注册失败：" + err.message, "error");
@@ -570,8 +610,21 @@ const App = () => {
               <input type="text" value={nameInput} onChange={e => setNameInput(e.target.value)} className="w-full p-5 bg-slate-50 rounded-2xl text-center font-bold outline-none focus:ring-2 ring-indigo-300" placeholder="真实姓名" />
               <button onClick={async () => {
                 if (!workIdInput || !nameInput) return notify("请填写所有信息", "error");
-                // 等待匿名认证完成
-                if (!user || !user.uid) return notify("认证服务初始化中，请稍候几秒再试", "warning");
+                // 如果匿名认证尚未完成，等待（最多 5 秒）
+                let currentUid = user?.uid || auth.currentUser?.uid;
+                if (!currentUid) {
+                  notify("正在初始化安全连接...", "info");
+                  for (let i = 0; i < 10; i++) {
+                    await new Promise(r => setTimeout(r, 500));
+                    const cu = auth.currentUser;
+                    if (cu?.uid) {
+                      currentUid = cu.uid;
+                      if (!user) setUser(cu);
+                      break;
+                    }
+                  }
+                  if (!currentUid) return notify("安全连接失败，请刷新页面重试", "error");
+                }
 
                 try {
                   let userData = null;
@@ -625,14 +678,22 @@ const App = () => {
                   localStorage.setItem('loggedInWorkId', userData.workId);
                   localStorage.setItem('sessionId', sessionId);
                   await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', userDocId), {
-                    uid: user.uid,
+                    uid: currentUid,
                     lastLoginAt: serverTimestamp(),
                     lastLoginDevice: getPlatformInfo().type,
                     sessionId: sessionId
                   });
 
+                  // 管理员登录后写入 adminSessions，安全规则 isAdmin 靠这个判断
+                  if (userData.role === 'admin') {
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'adminSessions', currentUid), {
+                      uid: currentUid,
+                      workId: userData.workId,
+                      createdAt: serverTimestamp()
+                    }).catch(() => {});
+                  }
                   notify("✓ 登录成功", "success");
-                  setProfile({ ...userData, uid: user.uid });
+                  setProfile({ ...userData, uid: currentUid });
                   setAuthMode('app');
                 } catch (err) {
                   console.error("Login error:", err);
@@ -914,10 +975,27 @@ const App = () => {
                         <button onClick={() => setSelectedUserUid(u.uid)} className="w-full py-3 bg-indigo-100 text-indigo-600 hover:bg-indigo-200 rounded-xl text-[10px] font-black uppercase shadow transition-all">
                           📊 查看详细工时
                         </button>
-                        <div className="flex gap-2">
-                          <button onClick={(e) => { e.stopPropagation(); updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.id), { isActive: !u.isActive }).catch(err => notify('更新状态失败', 'error')); }} className={`flex-1 py-3 ${u.isActive ? 'bg-slate-900 hover:bg-slate-800' : 'bg-emerald-600 hover:bg-emerald-700'} text-white rounded-xl text-[10px] font-black uppercase shadow-lg transition-all`}>{u.isActive ? '锁定' : '激活'}</button>
-                          <button onClick={(e) => { e.stopPropagation(); if(window.confirm(`确认删除 ${u.name} ？`)) { updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.id), { isActive: false, isDeleted: true, deletedAt: new Date().toISOString(), deletedBy: profile?.name || '未知管理员', deletedByWorkId: profile?.workId || 'N/A' }).then(() => notify('成员已删除，可在回收站查看', 'success')).catch(err => notify('删除失败', 'error')); } }} className="flex-1 py-3 bg-rose-100 text-rose-600 hover:bg-rose-200 rounded-xl text-[10px] font-black uppercase shadow transition-all">删除</button>
-                        </div>
+                        {(() => {
+                          const isSelf = profile?.workId === u.workId;
+                          return (
+                            <div className="flex gap-2">
+                              {isSelf ? (
+                                <button disabled className="flex-1 py-3 bg-slate-200 text-slate-400 rounded-xl text-[10px] font-bold uppercase shadow-inner cursor-not-allowed" title="不能锁定自己的管理员账号">
+                                  🔒 自己
+                                </button>
+                              ) : (
+                                <button onClick={(e) => { e.stopPropagation(); updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.id), { isActive: !u.isActive }).catch(err => notify('更新状态失败', 'error')); }} className={`flex-1 py-3 ${u.isActive ? 'bg-slate-900 hover:bg-slate-800' : 'bg-emerald-600 hover:bg-emerald-700'} text-white rounded-xl text-[10px] font-black uppercase shadow-lg transition-all`}>{u.isActive ? '锁定' : '激活'}</button>
+                              )}
+                              {isSelf ? (
+                                <button disabled className="flex-1 py-3 bg-slate-100 text-slate-300 rounded-xl text-[10px] font-bold uppercase shadow-inner cursor-not-allowed" title="不能删除自己的管理员账号">
+                                  🗑 自己
+                                </button>
+                              ) : (
+                                <button onClick={(e) => { e.stopPropagation(); if(window.confirm(`确认删除 ${u.name} ？`)) { updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.id), { isActive: false, isDeleted: true, deletedAt: new Date().toISOString(), deletedBy: profile?.name || '未知管理员', deletedByWorkId: profile?.workId || 'N/A' }).then(() => notify('成员已删除，可在回收站查看', 'success')).catch(err => notify('删除失败', 'error')); } }} className="flex-1 py-3 bg-rose-100 text-rose-600 hover:bg-rose-200 rounded-xl text-[10px] font-black uppercase shadow transition-all">删除</button>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   );
