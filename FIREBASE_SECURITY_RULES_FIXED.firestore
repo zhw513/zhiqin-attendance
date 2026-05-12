@@ -66,8 +66,8 @@ service cloud.firestore {
     }
 
     function isAdmin(appId) {
-      let session = get(/databases/$(database)/documents/artifacts/$(appId)/public/data/adminSessions/$(request.auth.uid));
-      return request.auth != null && session.exists;
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/adminSessions/$(request.auth.uid));
     }
 
     function isActiveStaff(appId) {

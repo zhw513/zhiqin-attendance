@@ -988,18 +988,19 @@ const App = () => {
                         </button>
                         {(() => {
                           const isSelf = profile?.workId === u.workId;
+                          const isOtherAdmin = !isSelf && u.role === 'admin';
                           return (
                             <div className="flex gap-2">
                               {isSelf ? (
-                                <button disabled className="flex-1 py-3 bg-slate-200 text-slate-400 rounded-xl text-[10px] font-bold uppercase shadow-inner cursor-not-allowed" title="不能锁定自己的管理员账号">
+                                <button disabled className="flex-1 py-3 bg-slate-200 text-slate-400 rounded-xl text-[10px] font-bold uppercase shadow-inner cursor-not-allowed" title="不能锁定自己">
                                   🔒 自己
                                 </button>
                               ) : (
                                 <button onClick={(e) => { e.stopPropagation(); updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.id), { isActive: !u.isActive }).catch(err => notify('更新状态失败', 'error')); }} className={`flex-1 py-3 ${u.isActive ? 'bg-slate-900 hover:bg-slate-800' : 'bg-emerald-600 hover:bg-emerald-700'} text-white rounded-xl text-[10px] font-black uppercase shadow-lg transition-all`}>{u.isActive ? '锁定' : '激活'}</button>
                               )}
-                              {isSelf ? (
-                                <button disabled className="flex-1 py-3 bg-slate-100 text-slate-300 rounded-xl text-[10px] font-bold uppercase shadow-inner cursor-not-allowed" title="不能删除自己的管理员账号">
-                                  🗑 自己
+                              {(isSelf || isOtherAdmin) ? (
+                                <button disabled className="flex-1 py-3 bg-slate-100 text-slate-300 rounded-xl text-[10px] font-bold uppercase shadow-inner cursor-not-allowed" title={isSelf ? '不能删除自己' : '不能删除其他管理员'}>
+                                  🗑 {isSelf ? '自己' : '管理员'}
                                 </button>
                               ) : (
                                 <button onClick={(e) => { e.stopPropagation(); if(window.confirm(`确认删除 ${u.name} ？`)) { updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.id), { isActive: false, isDeleted: true, deletedAt: new Date().toISOString(), deletedBy: profile?.name || '未知管理员', deletedByWorkId: profile?.workId || 'N/A' }).then(() => notify('成员已删除，可在回收站查看', 'success')).catch(err => notify('删除失败', 'error')); } }} className="flex-1 py-3 bg-rose-100 text-rose-600 hover:bg-rose-200 rounded-xl text-[10px] font-black uppercase shadow transition-all">删除</button>

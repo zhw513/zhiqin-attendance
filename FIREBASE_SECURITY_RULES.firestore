@@ -104,8 +104,8 @@ service cloud.firestore {
     // 检查当前用户是否为管理员
     // 管理员登录后会在 adminSessions/{auth.uid} 写入会话标记
     function isAdmin(appId) {
-      let session = get(/databases/$(database)/documents/artifacts/$(appId)/public/data/adminSessions/$(request.auth.uid));
-      return request.auth != null && session.exists;
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/adminSessions/$(request.auth.uid));
     }
 
     // 检查当前用户是否为已激活员工
