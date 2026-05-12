@@ -166,31 +166,46 @@ const App = () => {
     window.addEventListener('online', () => { setIsOnline(true); checkIntegrity(); });
     window.addEventListener('offline', () => setIsOnline(false));
 
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
       if (u) {
         setUser(u);
         // 优先从 localStorage 获取已保存的 workId 查找用户
         const savedWorkId = localStorage.getItem('loggedInWorkId');
         const lookupDocId = savedWorkId || u.uid;
-
         const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', lookupDocId);
-        onSnapshot(userDocRef, (snap) => {
-          if (snap.exists()) {
-            const p = snap.data();
-            // 更新 uid 确保后续设备切换也能找到
-            if (p.uid !== u.uid && savedWorkId) {
-              updateDoc(userDocRef, { uid: u.uid }).catch(() => {});
+
+        // 先用 getDoc 重试加载，避免 onSnapshot 首读因令牌传播延迟而报权限错误
+        let profileLoaded = false;
+        for (let retry = 0; retry < 3 && !profileLoaded; retry++) {
+          try {
+            const snap = await getDoc(userDocRef);
+            if (snap.exists()) {
+              const p = snap.data();
+              if (p.uid !== u.uid && savedWorkId) {
+                updateDoc(userDocRef, { uid: u.uid }).catch(() => {});
+              }
+              setProfile(p);
+              setAuthMode('app');
+              setLoading(false);
+              profileLoaded = true;
+              if (p.role === 'admin') {
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'adminSessions', u.uid), {
+                  uid: u.uid, workId: p.workId, createdAt: serverTimestamp()
+                }).catch(() => {});
+              }
             }
-            setProfile(p);
-            setAuthMode('app');
-            setLoading(false);
-            // 管理员自动登录：写入 adminSessions
-            if (p.role === 'admin') {
-              setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'adminSessions', u.uid), {
-                uid: u.uid, workId: p.workId, createdAt: serverTimestamp()
-              }).catch(() => {});
-            }
-          } else if (savedWorkId) {
+            break; // 文档存在就跳出（找不到就不重试了）
+          } catch (err) {
+            if (retry < 2) await new Promise(r => setTimeout(r, 1200));
+          }
+        }
+
+        if (profileLoaded) {
+          // 实时监听后续变更
+          onSnapshot(userDocRef, (snap) => {
+            if (snap.exists()) setProfile(snap.data());
+          }, () => {});
+        } else if (savedWorkId) {
             // 如果按 savedWorkId 没找到，扫描全表
             const usersCol = collection(db, 'artifacts', appId, 'public', 'data', 'users');
             const unsubSearch = onSnapshot(usersCol, (snapshot) => {
@@ -242,10 +257,6 @@ const App = () => {
             });
             return unsubSearch;
           }
-        }, (err) => {
-          console.error("Profile sync error", err);
-          setLoading(false);
-        });
       } else {
         setLoading(false);
       }
